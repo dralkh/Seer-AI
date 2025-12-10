@@ -175,7 +175,7 @@ seer-ai/
 
 ## Future Implementations Ideas
 
-We are actively exploring several advanced features to enhance Seer AI's capabilities. These are currently in the planning or proof-of-concept phase:
+Propose several advanced features to enhance Seer AI's capabilities. These are currently in the just idea board.
 
 ### 1. Prompt Library
 A built-in library of research-focused prompt templates to streamline common tasks.
