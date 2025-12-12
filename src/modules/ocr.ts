@@ -114,7 +114,9 @@ export class OcrService {
         return null;
     }
 
-    public async convertToMarkdown(item: Zotero.Item) {
+    public async convertToMarkdown(item: Zotero.Item, options: { showProgress?: boolean } = {}) {
+        const { showProgress = true } = options;
+
         // Get mode and API keys
         const rawMode = Zotero.Prefs.get(`${config.prefsPrefix}.datalabMode`);
         ztoolkit.log(`OCR: Raw mode preference value: "${rawMode}" (type: ${typeof rawMode})`);
@@ -136,20 +138,28 @@ export class OcrService {
 
         // Validate API keys based on mode
         if (mode === "cloud" && !this.apiKey) {
-            new ztoolkit.ProgressWindow("DataLab OCR").createLine({
-                text: "Error: DataLab API Key is missing. Please set it in preferences.",
-                icon: "warning",
-                progress: 100
-            }).show();
+            const msg = "Error: DataLab API Key is missing. Please set it in preferences.";
+            ztoolkit.log(msg);
+            if (showProgress) {
+                new ztoolkit.ProgressWindow("DataLab OCR").createLine({
+                    text: msg,
+                    icon: "warning",
+                    progress: 100
+                }).show();
+            }
             return;
         }
 
         if (mode === "mistral" && !mistralApiKey) {
-            new ztoolkit.ProgressWindow("Mistral OCR").createLine({
-                text: "Error: Mistral API Key is missing. Please set it in preferences.",
-                icon: "warning",
-                progress: 100
-            }).show();
+            const msg = "Error: Mistral API Key is missing. Please set it in preferences.";
+            ztoolkit.log(msg);
+            if (showProgress) {
+                new ztoolkit.ProgressWindow("Mistral OCR").createLine({
+                    text: msg,
+                    icon: "warning",
+                    progress: 100
+                }).show();
+            }
             return;
         }
 
@@ -164,11 +174,15 @@ export class OcrService {
         })();
 
         if (!isPdfAttachment) {
-            new ztoolkit.ProgressWindow("OCR Error").createLine({
-                text: "Error: Selected item is not a PDF attachment.",
-                icon: "warning",
-                progress: 100
-            }).show();
+            const msg = "Error: Selected item is not a PDF attachment.";
+            ztoolkit.log(msg);
+            if (showProgress) {
+                new ztoolkit.ProgressWindow("OCR Error").createLine({
+                    text: msg,
+                    icon: "warning",
+                    progress: 100
+                }).show();
+            }
             return;
         }
 
@@ -176,12 +190,17 @@ export class OcrService {
         const progressTitle = mode === "mistral" ? "Mistral OCR" : mode === "local" ? "Local Marker" : "DataLab OCR";
         ztoolkit.log(`OCR: Selected mode = "${mode}", title = "${progressTitle}"`);
 
-        const progressWin = new ztoolkit.ProgressWindow(progressTitle);
-        const progressLine = progressWin.createLine({
-            text: "Starting conversion...",
-            progress: 10,
-        });
-        progressWin.show();
+        let progressWin: any = null;
+        let progressLine: any = null;
+
+        if (showProgress) {
+            progressWin = new ztoolkit.ProgressWindow(progressTitle);
+            progressLine = progressWin.createLine({
+                text: "Starting conversion...",
+                progress: 10,
+            });
+            progressWin.show();
+        }
 
         try {
             ztoolkit.log("OCR: Starting path resolution...");
@@ -235,10 +254,12 @@ export class OcrService {
 
                 const localForceOcr = Zotero.Prefs.get(`${config.prefsPrefix}.localForceOcr`) as boolean ?? true;
 
-                progressLine.changeLine({
-                    text: "Sending request to Local Marker...",
-                    progress: 30
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Sending request to Local Marker...",
+                        progress: 30
+                    });
+                }
 
                 ztoolkit.log(`DataLab: Posting to ${localApiUrl}/marker with filepath: ${filePath}`);
 
@@ -277,27 +298,33 @@ export class OcrService {
                     throw new Error("Could not extract markdown from local server response. Check debug logs for response structure.");
                 }
 
-                progressLine.changeLine({
-                    text: "Saving extracted note...",
-                    progress: 90
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Saving extracted note...",
+                        progress: 90
+                    });
+                }
 
                 await this.saveNote(item, markdown);
 
-                progressLine.changeLine({
-                    text: "Done!",
-                    progress: 100
-                });
-                setTimeout(() => progressWin.close(), 3000);
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Done!",
+                        progress: 100
+                    });
+                }
+                if (progressWin) setTimeout(() => progressWin.close(), 3000);
 
             } else if (mode === "mistral") {
                 // --- Mistral OCR Mode ---
                 // Multi-step API: upload file, get signed URL, call OCR, extract markdown
 
-                progressLine.changeLine({
-                    text: "Uploading PDF to Mistral...",
-                    progress: 20
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Uploading PDF to Mistral...",
+                        progress: 20
+                    });
+                }
 
                 // Read the file
                 // @ts-ignore
@@ -343,10 +370,12 @@ export class OcrService {
 
                 const fileId = uploadResult.id;
 
-                progressLine.changeLine({
-                    text: "Getting signed URL...",
-                    progress: 40
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Getting signed URL...",
+                        progress: 40
+                    });
+                }
 
                 // Step 2: Get signed URL
                 const urlResponse = await Zotero.HTTP.request("GET", `https://api.mistral.ai/v1/files/${fileId}/url?expiry=1`, {
@@ -367,10 +396,12 @@ export class OcrService {
 
                 const signedUrl = urlResult.url;
 
-                progressLine.changeLine({
-                    text: "Processing OCR...",
-                    progress: 60
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Processing OCR...",
+                        progress: 60
+                    });
+                }
 
                 // Step 3: Call OCR endpoint
                 const ocrResponse = await Zotero.HTTP.request("POST", "https://api.mistral.ai/v1/ocr", {
@@ -412,18 +443,22 @@ export class OcrService {
                     throw new Error("Could not extract markdown from Mistral OCR response");
                 }
 
-                progressLine.changeLine({
-                    text: "Saving extracted note...",
-                    progress: 85
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Saving extracted note...",
+                        progress: 85
+                    });
+                }
 
                 await this.saveNote(item, markdownContent.trim());
 
                 // Step 4: Delete file from Mistral (cleanup)
-                progressLine.changeLine({
-                    text: "Cleaning up...",
-                    progress: 95
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Cleaning up...",
+                        progress: 95
+                    });
+                }
 
                 try {
                     await Zotero.HTTP.request("DELETE", `https://api.mistral.ai/v1/files/${fileId}`, {
@@ -436,11 +471,13 @@ export class OcrService {
                     ztoolkit.log("Mistral: Failed to delete file (non-critical)", deleteErr);
                 }
 
-                progressLine.changeLine({
-                    text: "Done!",
-                    progress: 100
-                });
-                setTimeout(() => progressWin.close(), 3000);
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Done!",
+                        progress: 100
+                    });
+                }
+                if (progressWin) setTimeout(() => progressWin.close(), 3000);
 
             } else {
                 // --- Cloud DataLab API Mode ---
@@ -453,10 +490,12 @@ export class OcrService {
                 const fileData: Uint8Array = await IOUtils.read(filePath);
                 ztoolkit.log(`DataLab: Read ${fileData.length} bytes from file`);
 
-                progressLine.changeLine({
-                    text: "Uploading PDF to DataLab Cloud...",
-                    progress: 30
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Uploading PDF to DataLab Cloud...",
+                        progress: 30
+                    });
+                }
 
                 // Build multipart body with cloud settings
                 const { body, contentType } = this.buildMultipartBody(fileData, "document.pdf", cloudForceOcr, cloudUseLlm);
@@ -469,6 +508,7 @@ export class OcrService {
                     },
                     body: body,
                     responseType: "json",
+                    timeout: 600000,
                 });
 
                 const uploadResult = uploadResponse.response as unknown as DatalabResponse;
@@ -478,10 +518,12 @@ export class OcrService {
                     throw new Error(uploadResult.error || "Upload failed");
                 }
 
-                progressLine.changeLine({
-                    text: "Processing... (This may take a while)",
-                    progress: 50
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Processing... (This may take a while)",
+                        progress: 50
+                    });
+                }
 
                 const result = await this.pollForResults(uploadResult.request_check_url, progressLine);
 
@@ -489,27 +531,33 @@ export class OcrService {
                     throw new Error(result.error || "Conversion failed");
                 }
 
-                progressLine.changeLine({
-                    text: "Saving extracted note...",
-                    progress: 90
-                });
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Saving extracted note...",
+                        progress: 90
+                    });
+                }
 
                 await this.saveNote(item, result.markdown || "");
 
-                progressLine.changeLine({
-                    text: "Done!",
-                    progress: 100
-                });
-                setTimeout(() => progressWin.close(), 3000);
+                if (progressLine) {
+                    progressLine.changeLine({
+                        text: "Done!",
+                        progress: 100
+                    });
+                }
+                if (progressWin) setTimeout(() => progressWin.close(), 3000);
             }
 
         } catch (e) {
             ztoolkit.log(e);
-            progressLine.changeLine({
-                text: `Error: ${(e as Error).message}`,
-                icon: "warning",
-                progress: 100
-            });
+            if (progressLine) {
+                progressLine.changeLine({
+                    text: `Error: ${(e as Error).message}`,
+                    icon: "warning",
+                    progress: 100
+                });
+            }
         }
     }
 

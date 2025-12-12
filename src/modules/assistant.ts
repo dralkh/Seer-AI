@@ -576,6 +576,28 @@ export class Assistant {
         });
         toolbar.appendChild(generateBtn);
 
+        // Extract All button (for OCR)
+        const extractBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { className: "table-btn extract-all-btn", innerText: "📄 Extract All" },
+            attributes: { id: "extract-all-btn" },
+            styles: {
+                padding: "6px 12px",
+                fontSize: "11px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                backgroundColor: "var(--background-primary)",
+                color: "var(--text-primary)",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: async () => {
+                    await this.extractAllEmptyPDFs(doc, item);
+                }
+            }]
+        });
+        toolbar.appendChild(extractBtn);
+
         // Response length control
         const responseLengthContainer = this.createResponseLengthControl(doc);
         toolbar.appendChild(responseLengthContainer);
@@ -1401,33 +1423,8 @@ export class Assistant {
                 // Get note IDs fresh (might have changed? unlikely but safe)
                 const noteIds = task.item.getNotes();
 
-                // First try generating from notes
+                // Only generate from notes
                 let content = await this.generateColumnContent(task.item, task.col, noteIds);
-
-                // If no notes, try PDF extraction
-                if (!content) {
-                    const attachmentIds = task.item.getAttachments();
-                    for (const attId of attachmentIds) {
-                        const att = Zotero.Items.get(attId);
-                        if (att && att.attachmentContentType === 'application/pdf') {
-                            try {
-                                let fullText = "";
-                                if ((Zotero.Fulltext as any).getItemContent) {
-                                    const pdfContent = await (Zotero.Fulltext as any).getItemContent(att.id);
-                                    fullText = pdfContent?.content || "";
-                                } else if ((Zotero.Fulltext as any).getTextForItem) {
-                                    fullText = await (Zotero.Fulltext as any).getTextForItem(att.id) || "";
-                                }
-                                if (fullText) {
-                                    content = await this.generateColumnContentFromText(task.item, task.col, fullText.substring(0, 15000));
-                                    break;
-                                }
-                            } catch (pdfErr) {
-                                Zotero.debug(`[Seer AI] PDF extraction failed: ${pdfErr}`);
-                            }
-                        }
-                    }
-                }
 
                 if (content) {
                     // Update DOM immediately
@@ -1443,7 +1440,8 @@ export class Assistant {
                     generated++;
                 } else {
                     // No content generated
-                    task.td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">Empty - no notes/PDF</span>`;
+                    task.td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">Empty - no notes</span>`;
+                    task.td.title = "No notes found. Use 'Extract with OCR' to create notes first.";
                     task.td.style.cursor = "default";
                 }
             } catch (e) {
@@ -1481,6 +1479,162 @@ export class Assistant {
         }
 
         Zotero.debug(`[Seer AI] Generation complete: ${generated} generated, ${failed} failed`);
+    }
+
+    /**
+     * Extract text from all visible PDFs that don't have notes
+     */
+    private static async extractAllEmptyPDFs(doc: Document, item: Zotero.Item): Promise<void> {
+        Zotero.debug("[Seer AI] Extract All clicked");
+
+        // Find all visible rows
+        const table = doc.querySelector('.papers-table');
+        if (!table) return;
+
+        const rows = table.querySelectorAll('tr[data-paper-id]');
+        if (rows.length === 0) return;
+
+        // Get max concurrent from settings (OCR-specific setting)
+        const maxConcurrent = (Zotero.Prefs.get(`${addon.data.config.prefsPrefix}.datalabMaxConcurrent`) as number) || 5;
+        Zotero.debug(`[Seer AI] OCR Max concurrent: ${maxConcurrent}`);
+
+        // Build list of extraction tasks
+        interface ExtractionTask {
+            paperId: number;
+            pdf: Zotero.Item;
+            tds: HTMLElement[]; // Any "Click to process PDF" cells to update
+            item: Zotero.Item;
+        }
+        const tasks: ExtractionTask[] = [];
+
+        // Helper to check for existing notes
+        const hasExistingNote = (parent: Zotero.Item): boolean => {
+            return ocrService.hasExistingNote(parent);
+        };
+
+        for (let i = 0; i < rows.length; i++) {
+            const tr = rows[i] as HTMLElement;
+            const paperId = parseInt(tr.getAttribute('data-paper-id') || "0", 10);
+            if (!paperId) continue;
+
+            // Get paper item
+            const paperItem = Zotero.Items.get(paperId);
+            if (!paperItem || !paperItem.isRegularItem()) continue;
+
+            // 1. Check if has PDF
+            const pdf = ocrService.getFirstPdfAttachment(paperItem);
+            if (!pdf) continue;
+
+            // 2. Check if already has notes matching title
+            if (hasExistingNote(paperItem)) continue;
+
+            // Find cells that might show "Click to process PDF" status
+            // These would be computed cells that are empty
+            const tds: HTMLElement[] = [];
+            if (currentTableConfig && currentTableConfig.columns) {
+                currentTableConfig.columns.forEach((col, idx) => {
+                    if (col.type === 'computed' && col.visible) {
+                        const cellVal = (currentTableData?.rows.find(r => r.paperId === paperId)?.data[col.id]) || '';
+                        if (!cellVal.trim()) {
+                            // This cell is empty, so it might show the "OCR" prompt
+                            // Actual index in DOM depends on visible columns
+                            const visibleIdx = currentTableConfig!.columns.filter(c => c.visible).findIndex(c => c.id === col.id);
+                            if (visibleIdx !== -1 && tr.children[visibleIdx]) {
+                                tds.push(tr.children[visibleIdx] as HTMLElement);
+                            }
+                        }
+                    }
+                });
+            }
+
+            tasks.push({
+                paperId,
+                pdf,
+                tds,
+                item: paperItem
+            });
+
+            // Immediate feedback
+            tds.forEach(td => {
+                td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px;">📄 Queued...</span>`;
+                td.style.cursor = "wait";
+            });
+        }
+
+        if (tasks.length === 0) {
+            Zotero.debug("[Seer AI] No PDFs to extract");
+            return;
+        }
+
+        Zotero.debug(`[Seer AI] ${tasks.length} PDFs to extract`);
+
+        const extractBtn = doc.getElementById('extract-all-btn') as HTMLButtonElement | null;
+        const originalBtnText = extractBtn?.innerText || "📄 Extract All";
+        let completed = 0;
+        let success = 0;
+        let failed = 0;
+
+        const updateProgress = () => {
+            if (extractBtn) {
+                extractBtn.innerText = `📄 OCR ${completed}/${tasks.length}`;
+                extractBtn.disabled = true;
+                extractBtn.style.cursor = "wait";
+            }
+        };
+
+        const processTask = async (task: ExtractionTask): Promise<void> => {
+            try {
+                // Update cells to "Processing"
+                task.tds.forEach(td => {
+                    td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 OCR Processing...</span>`;
+                });
+
+                // Run silent OCR
+                await ocrService.convertToMarkdown(task.pdf, { showProgress: false });
+
+                // Update cells to "Done"
+                task.tds.forEach(td => {
+                    td.innerHTML = `<span style="color: green; font-size: 11px;">✓ Note Extracted</span>`;
+                });
+                success++;
+            } catch (e) {
+                Zotero.debug(`[Seer AI] OCR Error for ${task.paperId}: ${e}`);
+                task.tds.forEach(td => {
+                    td.innerHTML = `<span style="color: #c62828; font-size: 11px;">OCR Error</span>`;
+                    td.title = String(e);
+                });
+                failed++;
+            } finally {
+                completed++;
+                updateProgress();
+            }
+        };
+
+        // Process in batches
+        updateProgress();
+        for (let i = 0; i < tasks.length; i += maxConcurrent) {
+            const batch = tasks.slice(i, i + maxConcurrent);
+            await Promise.all(batch.map(processTask));
+
+            // Refresh logic - notes added, so we should refresh validity
+            // But full refresh might kill our "Done" status
+            // Maybe just refresh at very end
+        }
+
+        // Restore button
+        if (extractBtn) {
+            extractBtn.innerText = `✓ OCR Done (${success})`;
+            extractBtn.disabled = false;
+            extractBtn.style.cursor = "pointer";
+            setTimeout(() => {
+                extractBtn.innerText = originalBtnText;
+            }, 2000);
+        }
+
+        // Refresh table to pick up new notes and show "Generate" button
+        setTimeout(() => {
+            this.debounceTableRefresh(doc, item);
+        }, 1500);
     }
 
     /**
