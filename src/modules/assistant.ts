@@ -622,6 +622,38 @@ export class Assistant {
         });
         toolbar.appendChild(exportBtn);
 
+        // Save as Notes button (Data Traceability)
+        const saveAsNotesBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { className: "table-btn", innerText: "📋 Notes" },
+            attributes: { title: "Save table data as notes attached to each paper" },
+            styles: {
+                padding: "6px 12px",
+                fontSize: "11px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                backgroundColor: "var(--background-primary)",
+                color: "var(--text-primary)",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: async () => {
+                    const rowCount = currentTableConfig?.addedPaperIds?.length || 0;
+                    if (rowCount === 0) {
+                        doc.defaultView?.alert("No papers in table to save as notes.");
+                        return;
+                    }
+                    const confirmed = doc.defaultView?.confirm(
+                        `Save table data for ${rowCount} paper(s) as notes?\n\nThis will create/update a "📊 Tables" note attached to each paper.`
+                    );
+                    if (confirmed) {
+                        await this.saveAllRowsAsNotes(doc);
+                    }
+                }
+            }]
+        });
+        toolbar.appendChild(saveAsNotesBtn);
+
         // Save button
         const saveBtn = ztoolkit.UI.createElement(doc, "button", {
             properties: { className: "table-btn", innerText: "💾" },
@@ -2317,6 +2349,23 @@ Task: ${columnPrompt}`;
             headerRow.appendChild(th);
         });
 
+        // Add Actions header cell
+        const actionsHeader = ztoolkit.UI.createElement(doc, "th", {
+            properties: { innerText: "💾" },
+            attributes: { title: "Save row as note" },
+            styles: {
+                padding: "8px 6px",
+                backgroundColor: "var(--background-secondary)",
+                borderBottom: "2px solid rgba(128, 128, 128, 0.5)",
+                borderRight: "1px solid rgba(128, 128, 128, 0.4)",
+                fontSize: "12px",
+                fontWeight: "600",
+                width: "40px",
+                textAlign: "center"
+            }
+        });
+        headerRow.appendChild(actionsHeader);
+
         thead.appendChild(headerRow);
         table.appendChild(thead);
 
@@ -2478,6 +2527,65 @@ Task: ${columnPrompt}`;
 
                 tr.appendChild(td);
             });
+
+            // Add actions cell with save button
+            const actionsCell = ztoolkit.UI.createElement(doc, "td", {
+                styles: {
+                    padding: "4px 8px",
+                    borderBottom: "1px solid rgba(128, 128, 128, 0.4)",
+                    borderRight: "1px solid rgba(128, 128, 128, 0.4)",
+                    width: "40px",
+                    textAlign: "center",
+                    verticalAlign: "middle"
+                }
+            });
+
+            const saveRowBtn = ztoolkit.UI.createElement(doc, "button", {
+                properties: { innerText: "💾" },
+                attributes: { title: "Save this row as a note attached to the paper" },
+                styles: {
+                    background: "none",
+                    border: "none",
+                    fontSize: "14px",
+                    cursor: "pointer",
+                    padding: "4px",
+                    borderRadius: "4px",
+                    transition: "background-color 0.15s"
+                },
+                listeners: [{
+                    type: "click",
+                    listener: async (e: Event) => {
+                        e.stopPropagation();
+                        const btn = e.target as HTMLElement;
+                        btn.innerText = "⏳";
+                        btn.style.cursor = "wait";
+
+                        const cols = currentTableConfig?.columns || defaultColumns;
+                        const success = await this.saveRowAsNote(row, cols);
+
+                        if (success) {
+                            btn.innerText = "✓";
+                            btn.style.color = "#4CAF50";
+                            setTimeout(() => {
+                                btn.innerText = "💾";
+                                btn.style.color = "";
+                            }, 2000);
+                        } else {
+                            btn.innerText = "✕";
+                            btn.style.color = "#c62828";
+                            setTimeout(() => {
+                                btn.innerText = "💾";
+                                btn.style.color = "";
+                            }, 2000);
+                        }
+                        btn.style.cursor = "pointer";
+                    }
+                }]
+            });
+            saveRowBtn.addEventListener("mouseenter", () => { saveRowBtn.style.backgroundColor = "rgba(128,128,128,0.2)"; });
+            saveRowBtn.addEventListener("mouseleave", () => { saveRowBtn.style.backgroundColor = ""; });
+            actionsCell.appendChild(saveRowBtn);
+            tr.appendChild(actionsCell);
 
             tbody.appendChild(tr);
         });
@@ -3085,6 +3193,194 @@ Task: ${columnPrompt}`;
 
         } catch (e) {
             Zotero.debug(`[Seer AI] Error exporting table: ${e}`);
+        }
+    }
+
+    /**
+     * Find existing "Tables" note for a given paper item
+     * Returns the note item if found, null otherwise
+     */
+    private static findExistingTablesNote(parentItemId: number): Zotero.Item | null {
+        try {
+            const parentItem = Zotero.Items.get(parentItemId);
+            if (!parentItem || !parentItem.isRegularItem()) return null;
+
+            const noteIDs = parentItem.getNotes();
+            for (const noteID of noteIDs) {
+                const note = Zotero.Items.get(noteID);
+                if (note) {
+                    const noteContent = note.getNote();
+                    // Check if note has the Tables marker
+                    if (noteContent.includes('<h2>📊 Tables')) {
+                        return note as Zotero.Item;
+                    }
+                }
+            }
+            return null;
+        } catch (e) {
+            Zotero.debug(`[Seer AI] Error finding Tables note: ${e}`);
+            return null;
+        }
+    }
+
+    /**
+     * Parse existing table data from a Tables note
+     * Returns a map of columnId -> value
+     */
+    private static parseTablesNoteContent(noteContent: string): Record<string, string> {
+        const data: Record<string, string> = {};
+        try {
+            // Extract table rows using regex
+            // Format: <tr><td>ColumnName</td><td>Value</td></tr>
+            const rowRegex = /<tr>\s*<td[^>]*>([^<]+)<\/td>\s*<td[^>]*>([\s\S]*?)<\/td>\s*<\/tr>/gi;
+            let match;
+            while ((match = rowRegex.exec(noteContent)) !== null) {
+                const columnName = match[1].trim();
+                const value = match[2].trim();
+                // Use column name as key (we'll match by name)
+                data[columnName] = value;
+            }
+        } catch (e) {
+            Zotero.debug(`[Seer AI] Error parsing Tables note: ${e}`);
+        }
+        return data;
+    }
+
+    /**
+     * Generate HTML table content for a row
+     */
+    private static generateTablesNoteHtml(paperTitle: string, row: TableRow, columns: TableColumn[]): string {
+        const timestamp = new Date().toLocaleString();
+
+        let tableRows = '';
+        for (const col of columns) {
+            if (!col.visible) continue;
+            // Skip non-data columns like title (already in header)
+            if (col.id === 'title') continue;
+
+            const value = row.data[col.id] || '';
+            const escapedValue = value
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/\n/g, '<br/>');
+
+            tableRows += `    <tr><td style="padding: 8px; border: 1px solid #ddd; font-weight: 600;">${col.name}</td><td style="padding: 8px; border: 1px solid #ddd;">${escapedValue}</td></tr>\n`;
+        }
+
+        return `<h2>📊 Tables - ${paperTitle.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</h2>
+<table style="border-collapse: collapse; width: 100%; margin: 10px 0;">
+  <thead>
+    <tr style="background: #f5f5f5;">
+      <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Column</th>
+      <th style="padding: 8px; border: 1px solid #ddd; text-align: left;">Value</th>
+    </tr>
+  </thead>
+  <tbody>
+${tableRows}  </tbody>
+</table>
+<p style="color: #888; font-size: 11px;"><em>Last updated: ${timestamp}</em></p>`;
+    }
+
+    /**
+     * Save a single table row as a Zotero note attached to the source paper
+     * If a Tables note already exists, merges new columns without duplicating
+     */
+    private static async saveRowAsNote(row: TableRow, columns: TableColumn[]): Promise<boolean> {
+        try {
+            const parentItem = Zotero.Items.get(row.paperId);
+            if (!parentItem || !parentItem.isRegularItem()) {
+                Zotero.debug(`[Seer AI] Cannot save note: Invalid parent item ${row.paperId}`);
+                return false;
+            }
+
+            const paperTitle = parentItem.getField('title') as string || 'Untitled';
+
+            // Check for existing Tables note
+            const existingNote = this.findExistingTablesNote(row.paperId);
+
+            if (existingNote) {
+                // Merge: Parse existing data and update with new columns
+                const existingData = this.parseTablesNoteContent(existingNote.getNote());
+
+                // Create merged row data - preserve existing values, add new ones
+                const mergedData: TableRow = {
+                    ...row,
+                    data: { ...row.data }
+                };
+
+                // For each column, if existing note has a value and current row doesn't, use existing
+                for (const colName in existingData) {
+                    const col = columns.find(c => c.name === colName);
+                    if (col && (!mergedData.data[col.id] || mergedData.data[col.id].trim() === '')) {
+                        mergedData.data[col.id] = existingData[colName];
+                    }
+                }
+
+                // Generate updated HTML
+                const newContent = this.generateTablesNoteHtml(paperTitle, mergedData, columns);
+                existingNote.setNote(newContent);
+                await existingNote.saveTx();
+
+                Zotero.debug(`[Seer AI] Updated existing Tables note for: ${paperTitle}`);
+            } else {
+                // Create new note
+                const note = new Zotero.Item('note');
+                note.libraryID = parentItem.libraryID;
+                note.parentID = parentItem.id;
+
+                const noteContent = this.generateTablesNoteHtml(paperTitle, row, columns);
+                note.setNote(noteContent);
+                await note.saveTx();
+
+                Zotero.debug(`[Seer AI] Created new Tables note for: ${paperTitle}`);
+            }
+
+            return true;
+        } catch (e) {
+            Zotero.debug(`[Seer AI] Error saving row as note: ${e}`);
+            return false;
+        }
+    }
+
+    /**
+     * Save all table rows as notes (batch operation)
+     */
+    private static async saveAllRowsAsNotes(doc: Document): Promise<void> {
+        try {
+            const tableData = await this.loadTableData();
+            if (tableData.rows.length === 0) {
+                Zotero.debug('[Seer AI] No rows to save as notes');
+                return;
+            }
+
+            const columns = currentTableConfig?.columns || defaultColumns;
+
+            // Show progress
+            const progressWindow = new Zotero.ProgressWindow({ closeOnClick: true });
+            progressWindow.changeHeadline('Saving Table as Notes');
+            progressWindow.addDescription('Processing...');
+            progressWindow.show();
+
+            let saved = 0;
+            let failed = 0;
+
+            for (const row of tableData.rows) {
+                const success = await this.saveRowAsNote(row, columns);
+                if (success) {
+                    saved++;
+                } else {
+                    failed++;
+                }
+            }
+
+            progressWindow.changeHeadline('Save Complete');
+            progressWindow.addDescription(`Saved: ${saved} | Failed: ${failed}`);
+            progressWindow.startCloseTimer(3000);
+
+            Zotero.debug(`[Seer AI] Batch save complete: ${saved} saved, ${failed} failed`);
+        } catch (e) {
+            Zotero.debug(`[Seer AI] Error in batch save: ${e}`);
         }
     }
 

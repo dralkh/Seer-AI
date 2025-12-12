@@ -275,18 +275,14 @@ A dedicated tab for searching and exploring papers using Semantic Scholar's API.
 - **Agentic Search**: Autonomous agent that searches, filters, and recommends papers based on your criteria.
 - **Graph Exploration**: Visualize citation networks and find connected papers.
 - **Direct Import**: One-click import of discovered papers directly into your Zotero library.
-- **Firecrawl Integration**: Extract pdf url from semantic scholar and import it to zotero.
+- **Firecrawl Integration**: Extract pdf url from semantic scholar or Firecrawl if needed and import it to zotero.
 
-### 7. Table Enhancements
-- **Quick PDF Access**: Clicking a table title automatically opens the corresponding PDF file.
-- **Data Traceability**: Ability to save individual table items as notes attached directly to the source item.
 
 ### Others
-Citations referencing
+Citations referencing within tables and chat
 MCP
 Connectors
-Commands
-UI
+UI revamp
 
 ---
 
