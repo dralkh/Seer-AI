@@ -22,8 +22,8 @@ https://github.com/user-attachments/assets/b0847022-d1ab-4e98-8e3a-607d1073db8f
 ## Features
 
 ### AI-Powered Chat Interface
-- **Contextual conversations** — Chat with AI about your selected papers with full context awareness
-- **Multi-paper support** — Add multiple papers to a single conversation for comparative analysis
+- **Contextual conversations** — Chat with AI about your selected papers with full context awareness (Currently only with notes)
+- **Multi-paper support** — Add multiple papers notes to a single conversation for comparative analysis
 - **Streaming responses** — Real-time, token-by-token response rendering
 - **Markdown support** — Responses are beautifully formatted with syntax highlighting for code blocks
 - **Vision support** — Paste images directly into chat for multimodal AI analysis
@@ -51,6 +51,14 @@ https://github.com/user-attachments/assets/b0847022-d1ab-4e98-8e3a-607d1073db8f
 - **One-Click Generation** — Generate data for individual cells or entire columns with a single click
 - **Column Presets** — Save and load your favorite column configurations for different research projects
 - **Auto-Processing** — Automatically processes PDFs with OCR if notes are missing
+
+
+### Semantic Scholar Integration
+- **Advanced Search Agent** — Search for papers using keyword queries with advanced filtering (Year, Open Access, Venue, Citation Count).
+- **Smart suggestions** — Intelligent suggestions 
+- **Ai Search optimization** — Get AI-powered paper search optimization based on your current search parameters.
+
+
 
 
 ### Conversation Management
@@ -170,6 +178,14 @@ Use Mistral's AI-powered OCR for high-quality document extraction.
 
 Mistral OCR uses the `mistral-ocr-latest` model and automatically handles file upload/cleanup.
 
+### Semantic Scholar Setup
+
+1. Go to **Zotero → Settings → Seer AI**
+2. Enter your **Semantic Scholar API Key** (optional, but recommended for higher rate limits).
+   - Without an API key: Limited request rate.
+   - With an API key: Higher limits (up to 1 request/sec).
+3. Request a free API key from [Semantic Scholar](https://www.semanticscholar.org/product/api).
+
 ---
 
 ## Usage
@@ -271,12 +287,13 @@ Moving beyond keyword matching to understanding the meaning of your queries.
 - **Confidence Scores** — AI-generated confidence ratings for each extracted data point.
 - **Source Highlighting** — Click a cell to see the exact passage in the paper where the data came from.
 
-### 5. Semantic Scholar Search Agent Tab
-- **Saved Search History**: Saved search history shown in drop down of Past searches button - when clicking one of the list it would return user to previous search operation with all data saved and persisted - there would be button also to clear saved search history 
+### 5. Firecrawl API Integration
+- **URL Discovery** — Use Firecrawl API to discover and extract PDF URLs for papers that don't have direct links in Semantic Scholar results or tables, integration with chat tab with enabled web search.
 
-- **Direct Import**: One-click import of discovered papers directly into your Zotero library (Action button, compatible with zotero framework importing all variables of results. this action button would depend on default selection of collection/folder dropdown from search result to be saved there).
+### 6. Semantic Scholar Enhancements (WIP)
+- **Saved Search History** — Saved search history shown in drop down of Past searches button - when clicking one of the list it would return user to previous search operation with all data saved and persisted - with button clear saved search history.
+- **Direct Import** — One-click import of discovered papers directly into your Zotero library (Action button, compatible with zotero framework importing all variables of results. this action button would depend on default selection of collection/folder dropdown from search result to be saved there).
 
- **Firecrawl API Integration**: Firecrawl api (url api and api key set in settings as user may use local or cloud firecrawl instance) is used to obtain first result of search result item that doesnt contain pdf url based on result list metadata to be searched on from semantic scholar to be given as hyperlink (it would be action button within search list of search tab)
 
 
 ### Others
