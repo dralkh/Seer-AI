@@ -12,6 +12,9 @@ https://github.com/user-attachments/assets/b0847022-d1ab-4e98-8e3a-607d1073db8f
 <img width="2787" height="1564" alt="image" src="https://github.com/user-attachments/assets/8d99a2a2-a5f0-43d4-9f20-2b7ab49548f7" />
 
 
+<img width="1949" height="1514" alt="image" src="https://github.com/user-attachments/assets/b384fd8a-9e11-4c56-979a-533ca99900c0" />
+
+
 [![Zotero 7 Compatible](https://img.shields.io/badge/Zotero-7.x-brightgreen)](https://www.zotero.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
