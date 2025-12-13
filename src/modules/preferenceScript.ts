@@ -334,41 +334,312 @@ function updateButtonStates() {
 
 /**
  * Show dialog to add/edit model configuration
+ * Uses a single modal with all fields visible at once
  */
 function showModelConfigDialog(existingConfig?: AIModelConfig) {
   const isEdit = !!existingConfig;
   const title = isEdit ? "Edit Model Configuration" : "Add Model Configuration";
+  const doc = addon.data.prefs!.window.document;
+  const win = addon.data.prefs!.window;
 
-  // Create a simple prompt-based dialog (Zotero dialogs are complex)
-  const name = addon.data.prefs!.window.prompt(`${title}\n\nName:`, existingConfig?.name || "");
-  if (!name) return;
+  // Remove any existing modal
+  const existingModal = doc.getElementById('model-config-modal-overlay');
+  if (existingModal) existingModal.remove();
 
-  const apiURL = addon.data.prefs!.window.prompt("API URL:", existingConfig?.apiURL || "https://api.openai.com/v1/");
-  if (!apiURL) return;
+  // Create modal overlay
+  const overlay = doc.createElement('div');
+  overlay.id = 'model-config-modal-overlay';
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  `;
 
-  const apiKey = addon.data.prefs!.window.prompt("API Key:", existingConfig?.apiKey || "");
-  if (!apiKey) return;
+  // Create modal container
+  const modal = doc.createElement('div');
+  modal.style.cssText = `
+    background: #fff;
+    border-radius: 8px;
+    padding: 24px;
+    min-width: 420px;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  `;
 
-  const model = addon.data.prefs!.window.prompt("Model:", existingConfig?.model || "gpt-4o-mini");
-  if (!model) return;
+  // Modal title
+  const titleEl = doc.createElement('h3');
+  titleEl.textContent = title;
+  titleEl.style.cssText = `
+    margin: 0 0 20px 0;
+    font-size: 18px;
+    font-weight: 600;
+    color: #333;
+  `;
+  modal.appendChild(titleEl);
 
-  const newConfig = { name, apiURL, apiKey, model };
+  // Provider presets
+  const providerPresets = [
+    { name: '— Select a preset —', apiURL: '', model: '', placeholder: '' },
+    { name: 'OpenAI', apiURL: 'https://api.openai.com/v1/', model: 'gpt-5-mini', placeholder: 'sk-...' },
+    { name: 'Anthropic', apiURL: 'https://api.anthropic.com/v1/', model: 'claude-sonnet-4.5', placeholder: 'sk-ant-...' },
+    { name: 'Google AI (Gemini)', apiURL: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-2.5-flash', placeholder: 'AIza...' },
+    { name: 'Mistral AI', apiURL: 'https://api.mistral.ai/v1/', model: 'mistral-large-latest', placeholder: '' },
+    { name: 'OpenRouter', apiURL: 'https://openrouter.ai/api/v1/', model: 'openai/gpt-5-mini', placeholder: 'sk-or-...' },
+    { name: 'Groq', apiURL: 'https://api.groq.com/openai/v1/', model: 'openai/gpt-oss-120b', placeholder: 'gsk_...' },
+    { name: 'DeepSeek', apiURL: 'https://api.deepseek.com/v1/', model: 'deepseek-chat', placeholder: 'sk-...' },
+    { name: 'xAI (Grok)', apiURL: 'https://api.x.ai/v1/', model: 'grok-4.1-fast', placeholder: 'xai-...' },
+    { name: 'Together AI', apiURL: 'https://api.together.xyz/v1/', model: 'openai/gpt-oss-120b', placeholder: '' },
+    { name: 'Ollama (Local)', apiURL: 'http://localhost:11434/v1/', model: 'qwen3-vl:8b-thinking-q8_0', placeholder: '(optional)' },
+    { name: 'OpenAI Compatible', apiURL: 'http://seerai.com:1234/v1/', model: 'local-model', placeholder: '(optional)' },
+  ];
 
-  // Validate
-  const errors = validateModelConfig(newConfig);
-  if (errors.length > 0) {
-    addon.data.prefs!.window.alert("Validation errors:\n" + errors.join("\n"));
-    return;
+  // Field styles
+  const labelStyle = `
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #555;
+    margin-bottom: 4px;
+  `;
+  const inputStyle = `
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+  `;
+  const selectStyle = `
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+    background: #fff;
+    cursor: pointer;
+  `;
+
+  // Preset selector (only show for new configs)
+  const inputs: Record<string, HTMLInputElement> = {};
+
+  if (!isEdit) {
+    const presetLabel = doc.createElement('label');
+    presetLabel.textContent = 'Provider Preset';
+    presetLabel.style.cssText = labelStyle;
+    modal.appendChild(presetLabel);
+
+    const presetSelect = doc.createElement('select') as HTMLSelectElement;
+    presetSelect.style.cssText = selectStyle;
+
+    providerPresets.forEach((preset, idx) => {
+      const option = doc.createElement('option');
+      option.value = String(idx);
+      option.textContent = preset.name;
+      presetSelect.appendChild(option);
+    });
+
+    presetSelect.addEventListener('change', () => {
+      const idx = parseInt(presetSelect.value);
+      const preset = providerPresets[idx];
+      if (preset && idx > 0) {
+        if (inputs.name && !inputs.name.value) inputs.name.value = preset.name;
+        if (inputs.apiURL) inputs.apiURL.value = preset.apiURL;
+        if (inputs.model) inputs.model.value = preset.model;
+        if (inputs.apiKey) inputs.apiKey.placeholder = preset.placeholder || 'API Key';
+      }
+    });
+
+    modal.appendChild(presetSelect);
+
+    // Divider
+    const divider = doc.createElement('div');
+    divider.style.cssText = `
+      border-top: 1px solid #eee;
+      margin: 4px 0 16px 0;
+      position: relative;
+    `;
+    const dividerText = doc.createElement('span');
+    dividerText.textContent = 'or fill manually';
+    dividerText.style.cssText = `
+      position: absolute;
+      top: -9px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #fff;
+      padding: 0 12px;
+      font-size: 11px;
+      color: #999;
+    `;
+    divider.appendChild(dividerText);
+    modal.appendChild(divider);
   }
 
-  if (isEdit && existingConfig) {
-    updateModelConfig(existingConfig.id, newConfig);
-  } else {
-    addModelConfig(newConfig);
+  // Create form fields
+  const fields = [
+    { id: 'name', label: 'Name', placeholder: 'My OpenAI Config', value: existingConfig?.name || '', type: 'text' },
+    { id: 'apiURL', label: 'API URL', placeholder: 'https://api.openai.com/v1/', value: existingConfig?.apiURL || 'https://api.openai.com/v1/', type: 'text' },
+    { id: 'apiKey', label: 'API Key', placeholder: 'sk-...', value: existingConfig?.apiKey || '', type: 'password' },
+    { id: 'model', label: 'Model', placeholder: 'gpt-4o-mini', value: existingConfig?.model || 'gpt-4o-mini', type: 'text' },
+  ];
+
+  fields.forEach(field => {
+    const label = doc.createElement('label');
+    label.textContent = field.label;
+    label.style.cssText = labelStyle;
+    modal.appendChild(label);
+
+    const input = doc.createElement('input') as HTMLInputElement;
+    input.type = field.type;
+    input.placeholder = field.placeholder;
+    input.value = field.value;
+    input.style.cssText = inputStyle;
+    input.id = `model-config-${field.id}`;
+    inputs[field.id] = input;
+    modal.appendChild(input);
+
+    // Add focus effect
+    input.addEventListener('focus', () => {
+      input.style.borderColor = '#1976d2';
+      input.style.outline = 'none';
+    });
+    input.addEventListener('blur', () => {
+      input.style.borderColor = '#ddd';
+    });
+  });
+
+  // Error message container
+  const errorContainer = doc.createElement('div');
+  errorContainer.style.cssText = `
+    color: #d32f2f;
+    font-size: 12px;
+    margin-bottom: 16px;
+    display: none;
+    padding: 8px 12px;
+    background: #ffebee;
+    border-radius: 4px;
+  `;
+  modal.appendChild(errorContainer);
+
+  // Button container
+  const buttonContainer = doc.createElement('div');
+  buttonContainer.style.cssText = `
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 8px;
+  `;
+
+  // Cancel button
+  const cancelBtn = doc.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = `
+    padding: 10px 20px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    background: #fff;
+    color: #666;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+  `;
+  cancelBtn.addEventListener('mouseenter', () => {
+    cancelBtn.style.background = '#f5f5f5';
+  });
+  cancelBtn.addEventListener('mouseleave', () => {
+    cancelBtn.style.background = '#fff';
+  });
+  cancelBtn.addEventListener('click', () => {
+    overlay.remove();
+  });
+
+  // Save button
+  const saveBtn = doc.createElement('button');
+  saveBtn.textContent = isEdit ? 'Save Changes' : 'Add Configuration';
+  saveBtn.style.cssText = `
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    background: #1976d2;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+  `;
+  saveBtn.addEventListener('mouseenter', () => {
+    saveBtn.style.background = '#1565c0';
+  });
+  saveBtn.addEventListener('mouseleave', () => {
+    saveBtn.style.background = '#1976d2';
+  });
+
+  saveBtn.addEventListener('click', () => {
+    const newConfig = {
+      name: inputs.name.value.trim(),
+      apiURL: inputs.apiURL.value.trim(),
+      apiKey: inputs.apiKey.value.trim(),
+      model: inputs.model.value.trim(),
+    };
+
+    // Validate
+    const errors = validateModelConfig(newConfig);
+    if (errors.length > 0) {
+      errorContainer.textContent = errors.join('\n');
+      errorContainer.style.display = 'block';
+      return;
+    }
+
+    if (isEdit && existingConfig) {
+      updateModelConfig(existingConfig.id, newConfig);
+    } else {
+      addModelConfig(newConfig);
+    }
+
+    overlay.remove();
+    renderModelList();
+    updateButtonStates();
+  });
+
+  buttonContainer.appendChild(cancelBtn);
+  buttonContainer.appendChild(saveBtn);
+  modal.appendChild(buttonContainer);
+
+  // Close on overlay click
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) {
+      overlay.remove();
+    }
+  });
+
+  // Close on Escape key
+  const handleEscape = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      overlay.remove();
+      win.removeEventListener('keydown', handleEscape);
+    }
+  };
+  win.addEventListener('keydown', handleEscape);
+
+  overlay.appendChild(modal);
+
+  const container = doc.body || doc.documentElement;
+  if (container) {
+    container.appendChild(overlay);
   }
 
-  renderModelList();
-  updateButtonStates();
+  // Focus first input
+  inputs.name.focus();
 }
 
 /**

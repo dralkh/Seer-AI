@@ -62,6 +62,15 @@ export interface SelectedImage extends BaseSelection {
     mimeType: string;    // image/png, image/jpeg, etc.
 }
 
+// Table context (extracted data from Paper Tables)
+export interface SelectedTable extends BaseSelection {
+    id: string;          // Unique ID (table config name or timestamp)
+    type: 'table';
+    content: string;     // Formatted table data (rows/columns as text)
+    rowCount: number;    // Number of rows in the table
+    columnNames: string[]; // Column names for reference
+}
+
 // Union type for any selection
 export type Selection =
     | SelectedItem
@@ -70,7 +79,8 @@ export type Selection =
     | SelectedCollection
     | SelectedNote
     | SelectedAttachment
-    | SelectedImage;
+    | SelectedImage
+    | SelectedTable;
 
 // Chat states containing all selections
 export interface ChatStates {
@@ -81,6 +91,7 @@ export interface ChatStates {
     notes: SelectedNote[];
     attachments: SelectedAttachment[];
     images: SelectedImage[];
+    tables: SelectedTable[];
 }
 
 // Empty default states
@@ -92,6 +103,7 @@ export const defaultChatStates: ChatStates = {
     notes: [],
     attachments: [],
     images: [],
+    tables: [],
 };
 
 // State type names for iteration
@@ -194,5 +206,10 @@ export const selectionConfigs: Record<StateName, SelectionConfig> = {
         icon: '🖼️',
         label: 'Images',
         className: 'chip-images',
+    },
+    tables: {
+        icon: '📊',
+        label: 'Tables',
+        className: 'chip-tables',
     },
 };

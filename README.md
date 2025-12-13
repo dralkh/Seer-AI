@@ -66,7 +66,7 @@ https://github.com/user-attachments/assets/b0847022-d1ab-4e98-8e3a-607d1073db8f
 
 ### From GitHub (Recommended)
 
-1. Download the [`seer-ai.xpi`](https://github.com/dralkh/Seer-AI/raw/main/seer-ai.xpi) file or from [Releases](https://github.com/dralkh/Seer-AI/releases)
+1. Download the latest release from [Releases](https://github.com/dralkh/Seer-AI/releases)
 2. In Zotero, go to **Tools → Add-ons**
 3. Click the gear icon and select **Install Add-on From File...**
 4. Select the downloaded `.xpi` file

@@ -15,3 +15,5 @@ tsconfig.tsbuildinfo
 build
 logs
 doc
+seer-ai.xpi
+.agent

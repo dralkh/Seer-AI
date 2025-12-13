@@ -36,6 +36,7 @@ export class ChatStateManager {
             notes: [...initialStates.notes],
             attachments: [...initialStates.attachments],
             images: [...(initialStates.images || [])],
+            tables: [...(initialStates.tables || [])],
         };
         this.options = { ...initialOptions };
         this.listeners = new Set();
@@ -61,6 +62,7 @@ export class ChatStateManager {
             notes: [...this.states.notes],
             attachments: [...this.states.attachments],
             images: [...this.states.images],
+            tables: [...this.states.tables],
         };
     }
 
@@ -127,6 +129,7 @@ export class ChatStateManager {
             notes: [],
             attachments: [],
             images: [],
+            tables: [],
         };
         this.notify();
     }
@@ -223,6 +226,16 @@ export class ChatStateManager {
             }
         }
 
+        // Add table context (extracted table data)
+        if (this.states.tables.length > 0) {
+            contextParts.push('\n=== Table Data ===');
+            for (const table of this.states.tables) {
+                contextParts.push(`\n--- Table: ${table.title} (${table.rowCount} rows) ---`);
+                contextParts.push(`Columns: ${table.columnNames.join(', ')}`);
+                contextParts.push(table.content);
+            }
+        }
+
         return contextParts.join('\n');
     }
 
@@ -246,6 +259,9 @@ export class ChatStateManager {
         }
         if (this.states.tags.length > 0) {
             parts.push(`${this.states.tags.length} tag(s)`);
+        }
+        if (this.states.tables.length > 0) {
+            parts.push(`${this.states.tables.length} table(s)`);
         }
 
         return parts.length > 0 ? parts.join(', ') : 'No selections';

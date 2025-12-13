@@ -1,7 +1,7 @@
 import { openAIService, OpenAIMessage, VisionMessage, VisionMessageContentPart } from "./openai";
 import { config } from "../../package.json";
 import { getChatStateManager, resetChatStateManager } from "./chat/stateManager";
-import { SelectedItem, SelectedNote, ChatMessage, selectionConfigs, AIModelConfig } from "./chat/types";
+import { SelectedItem, SelectedNote, SelectedTable, ChatMessage, selectionConfigs, AIModelConfig } from "./chat/types";
 import { getModelConfigs, getActiveModelConfig, setActiveModelId, hasModelConfigs } from "./chat/modelConfig";
 import { parseMarkdown } from "./chat/markdown";
 import { getMessageStore } from "./chat/messageStore";
@@ -447,6 +447,114 @@ export class Assistant {
             }
         });
 
+        // Workspace Title (Persistent & Editable)
+        const titleContainer = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                display: "flex",
+                alignItems: "center",
+                gap: "4px",
+                marginRight: "8px",
+                padding: "2px 8px",
+                borderRadius: "4px",
+                border: "1px solid transparent",
+                cursor: "pointer",
+                transition: "all 0.2s"
+            },
+            listeners: [{
+                type: "mouseenter",
+                listener: () => {
+                    if (!titleContainer.classList.contains("editing")) {
+                        titleContainer.style.backgroundColor = "var(--background-secondary)";
+                        titleContainer.style.border = "1px solid var(--border-primary)";
+                    }
+                }
+            }, {
+                type: "mouseleave",
+                listener: () => {
+                    if (!titleContainer.classList.contains("editing")) {
+                        titleContainer.style.backgroundColor = "transparent";
+                        titleContainer.style.border = "1px solid transparent";
+                    }
+                }
+            }, {
+                type: "click",
+                listener: () => {
+                    if (titleContainer.classList.contains("editing")) return;
+
+                    const nameLabel = titleContainer.querySelector(".workspace-name-label") as HTMLElement;
+                    const currentName = currentTableConfig?.name || "Untitled Workspace";
+
+                    // Switch to edit mode
+                    titleContainer.classList.add("editing");
+                    titleContainer.innerHTML = "";
+
+                    const input = ztoolkit.UI.createElement(doc, "input", {
+                        attributes: { type: "text", value: currentName },
+                        styles: {
+                            fontSize: "12px",
+                            fontWeight: "600",
+                            padding: "2px 4px",
+                            border: "1px solid var(--highlight-primary)",
+                            borderRadius: "2px",
+                            outline: "none",
+                            width: "150px",
+                            color: "var(--text-primary)",
+                            backgroundColor: "var(--background-primary)"
+                        }
+                    }) as HTMLInputElement;
+
+                    const saveName = async () => {
+                        const newName = input.value.trim() || "Untitled Workspace";
+                        if (currentTableConfig) {
+                            currentTableConfig.name = newName;
+                            const tableStore = getTableStore();
+                            await tableStore.saveConfig(currentTableConfig);
+                        }
+                        // Re-render title
+                        renderTitle();
+                        titleContainer.classList.remove("editing");
+                    };
+
+                    input.addEventListener("blur", saveName);
+                    input.addEventListener("keypress", (e: Event) => {
+                        const ke = e as KeyboardEvent;
+                        if (ke.key === "Enter") {
+                            input.blur();
+                        }
+                    });
+
+                    titleContainer.appendChild(input);
+                    input.focus();
+                    input.select();
+                }
+            }]
+        });
+
+        const renderTitle = () => {
+            titleContainer.innerHTML = "";
+            const prefix = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: "WORKSPACE:" },
+                styles: { fontSize: "10px", color: "var(--text-secondary)", fontWeight: "600", letterSpacing: "0.5px" }
+            });
+
+            const name = ztoolkit.UI.createElement(doc, "span", {
+                properties: { className: "workspace-name-label", innerText: currentTableConfig?.name || "Untitled Workspace" },
+                styles: { fontSize: "12px", fontWeight: "600", color: "var(--text-primary)" }
+            });
+
+            const editIcon = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: "✎" },
+                styles: { fontSize: "10px", color: "var(--text-tertiary)", opacity: "0.5" }
+            });
+
+            titleContainer.appendChild(prefix);
+            titleContainer.appendChild(name);
+            titleContainer.appendChild(editIcon);
+        };
+
+        renderTitle();
+        toolbar.appendChild(titleContainer);
+
         // Library/Collection filter dropdown
         const filterContainer = ztoolkit.UI.createElement(doc, "div", {
             styles: {
@@ -598,7 +706,7 @@ export class Assistant {
         });
         toolbar.appendChild(extractBtn);
 
-        // Response length control
+        // Response-length control
         const responseLengthContainer = this.createResponseLengthControl(doc);
         toolbar.appendChild(responseLengthContainer);
 
@@ -715,7 +823,7 @@ export class Assistant {
             listeners: [{
                 type: "click",
                 listener: () => {
-                    this.showHistoryPicker(doc, item);
+                    this.showWorkspacePicker(doc, item);
                 }
             }]
         });
@@ -2207,68 +2315,100 @@ Task: ${columnPrompt}`;
     }
 
     /**
-     * Show history picker to load a saved workspace
+     * Show table history/workspace picker with renaming support
      */
-    private static async showHistoryPicker(doc: Document, item: Zotero.Item): Promise<void> {
-        // Remove existing picker
-        const existing = doc.getElementById("history-picker");
+    private static async showWorkspacePicker(doc: Document, item: Zotero.Item): Promise<void> {
+        // Toggle existing dropdown
+        const existing = doc.getElementById("workspace-picker-dropdown") as HTMLElement;
         if (existing) {
-            existing.remove();
+            existing.style.opacity = "0";
+            existing.style.transform = "translateY(-10px)";
+            setTimeout(() => existing.remove(), 200);
             return;
         }
 
-        const win = doc.defaultView;
-        const isDarkMode = (win as any)?.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+        const toolbar = doc.querySelector(".table-toolbar") as HTMLElement;
+        if (!toolbar || !toolbar.parentNode) return;
 
-        // Create overlay
-        const overlay = ztoolkit.UI.createElement(doc, "div", {
-            properties: { id: "history-picker" },
+        // Create dropdown - match Add Papers style with inline positioning
+        const dropdown = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "workspace-picker-dropdown" },
             styles: {
-                position: "fixed",
-                top: "0",
-                left: "0",
-                width: "100%",
-                height: "100%",
-                backgroundColor: "rgba(0,0,0,0.5)",
+                backgroundColor: "var(--background-primary)",
+                borderRadius: "8px",
+                padding: "0",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+                overflow: "hidden",
+                border: "1px solid var(--border-primary)",
+                transition: "all 0.2s ease-out",
+                opacity: "0",
+                transform: "translateY(-10px)",
+                marginTop: "8px",
+                marginLeft: "8px",
+                marginRight: "8px"
+            }
+        });
+
+        // Header
+        const header = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                background: "linear-gradient(135deg, var(--highlight-primary) 0%, color-mix(in srgb, var(--highlight-primary) 80%, black) 100%)",
+                padding: "10px 14px",
                 display: "flex",
-                justifyContent: "center",
+                justifyContent: "space-between",
                 alignItems: "center",
-                zIndex: "10000"
+                borderRadius: "8px 8px 0 0"
             }
         });
 
-        // Create dialog
-        const dialog = ztoolkit.UI.createElement(doc, "div", {
+        const headerTitle = ztoolkit.UI.createElement(doc, "div", {
+            properties: { innerText: "📂 Saved Workspaces" },
             styles: {
-                backgroundColor: `var(--background-primary, ${isDarkMode ? '#333' : '#fafafa'})`,
-                color: `var(--text-primary, ${isDarkMode ? '#eee' : '#212121'})`,
-                borderRadius: "12px",
-                padding: "16px",
-                maxWidth: "450px",
-                width: "90%",
-                maxHeight: "60vh",
-                display: "flex",
-                flexDirection: "column",
-                gap: "12px",
-                boxShadow: "0 8px 32px rgba(0,0,0,0.2)"
+                fontSize: "13px",
+                fontWeight: "600",
+                color: "var(--highlight-text)",
+                textShadow: "0 1px 2px rgba(0,0,0,0.1)"
             }
         });
+        header.appendChild(headerTitle);
 
-        // Title
-        const title = ztoolkit.UI.createElement(doc, "div", {
-            properties: { innerText: "📜 Saved Workspaces" },
-            styles: { fontSize: "16px", fontWeight: "600" }
+        const closeBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "✕" },
+            styles: {
+                background: "rgba(0,0,0,0.1)",
+                border: "none",
+                borderRadius: "50%",
+                width: "22px",
+                height: "22px",
+                cursor: "pointer",
+                color: "var(--highlight-text)",
+                fontSize: "11px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+            },
+            listeners: [{
+                type: "click",
+                listener: () => {
+                    dropdown.style.opacity = "0";
+                    setTimeout(() => dropdown.remove(), 200);
+                }
+            }]
         });
-        dialog.appendChild(title);
+        header.appendChild(closeBtn);
+        dropdown.appendChild(header);
 
-        // History list container
+        // Content
+        const content = ztoolkit.UI.createElement(doc, "div", {
+            styles: { padding: "8px", display: "flex", flexDirection: "column", gap: "8px" }
+        });
+
         const listContainer = ztoolkit.UI.createElement(doc, "div", {
             styles: {
-                flex: "1",
+                maxHeight: "240px",
                 overflowY: "auto",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "4px",
-                maxHeight: "300px"
+                borderRadius: "6px",
+                backgroundColor: "var(--background-secondary)"
             }
         });
 
@@ -2276,122 +2416,448 @@ Task: ${columnPrompt}`;
         const tableStore = getTableStore();
         const history = await tableStore.loadHistory();
 
+        const renderList = async () => {
+            listContainer.innerHTML = "";
+            if (history.entries.length === 0) {
+                listContainer.appendChild(ztoolkit.UI.createElement(doc, "div", {
+                    properties: { innerText: "No saved workspaces." },
+                    styles: { padding: "16px", textAlign: "center", color: "var(--text-secondary)", fontSize: "12px" }
+                }));
+            } else {
+                for (const entry of history.entries) {
+                    const isActive = currentTableConfig && currentTableConfig.id === entry.config.id;
+                    const row = ztoolkit.UI.createElement(doc, "div", {
+                        styles: {
+                            padding: "8px 10px",
+                            borderBottom: "1px solid var(--border-primary)",
+                            cursor: "pointer",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            backgroundColor: isActive ? "var(--background-hover)" : "transparent"
+                        }
+                    });
+
+                    // Left side: Name and meta
+                    const info = ztoolkit.UI.createElement(doc, "div", {
+                        styles: { flex: "1", overflow: "hidden", marginRight: "8px" },
+                        listeners: [{
+                            type: "click",
+                            listener: async () => {
+                                // Load workspace
+                                currentTableConfig = { ...entry.config };
+                                entry.usedAt = new Date().toISOString();
+                                await tableStore.saveHistory(history); // Update last used
+                                await tableStore.saveConfig(currentTableConfig); // Set as current
+
+                                dropdown.style.opacity = "0";
+                                setTimeout(() => dropdown.remove(), 200);
+
+                                if (currentContainer && currentItem) {
+                                    this.renderInterface(currentContainer, currentItem);
+                                }
+                            }
+                        }]
+                    });
+
+                    const nameEl = ztoolkit.UI.createElement(doc, "div", {
+                        properties: { innerText: entry.config.name || "Untitled Workpace" },
+                        styles: { fontSize: "12px", fontWeight: isActive ? "600" : "500", color: "var(--text-primary)" }
+                    });
+
+                    const metaEl = ztoolkit.UI.createElement(doc, "div", {
+                        properties: { innerText: `${new Date(entry.usedAt).toLocaleDateString()} • ${entry.config.addedPaperIds?.length || 0} papers` },
+                        styles: { fontSize: "10px", color: "var(--text-secondary)", marginTop: "2px" }
+                    });
+
+                    info.appendChild(nameEl);
+                    info.appendChild(metaEl);
+                    row.appendChild(info);
+
+                    // Actions
+                    const actions = ztoolkit.UI.createElement(doc, "div", {
+                        styles: { display: "flex", gap: "4px" }
+                    });
+
+                    // Rename button
+                    const renameBtn = ztoolkit.UI.createElement(doc, "button", {
+                        properties: { innerText: "✏️", title: "Rename" },
+                        styles: {
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                            opacity: "0.6",
+                            padding: "2px"
+                        },
+                        listeners: [{
+                            type: "click",
+                            listener: async (e: Event) => {
+                                e.stopPropagation();
+                                const newName = doc.defaultView?.prompt("Rename workspace:", entry.config.name);
+                                if (newName) {
+                                    entry.config.name = newName;
+                                    await tableStore.saveHistory(history);
+                                    if (isActive && currentTableConfig) {
+                                        currentTableConfig.name = newName;
+                                        await tableStore.saveConfig(currentTableConfig);
+                                    }
+                                    renderList(); // Re-render list
+                                }
+                            }
+                        }]
+                    });
+                    renameBtn.addEventListener("mouseenter", () => (renameBtn.style.opacity = "1"));
+                    renameBtn.addEventListener("mouseleave", () => (renameBtn.style.opacity = "0.6"));
+
+                    actions.appendChild(renameBtn);
+
+                    // Delete button
+                    const deleteBtn = ztoolkit.UI.createElement(doc, "button", {
+                        properties: { innerText: "🗑", title: "Delete" },
+                        styles: {
+                            background: "none",
+                            border: "none",
+                            cursor: "pointer",
+                            fontSize: "12px",
+                            color: "#c62828",
+                            opacity: "0.6",
+                            padding: "2px"
+                        },
+                        listeners: [{
+                            type: "click",
+                            listener: async (e: Event) => {
+                                e.stopPropagation();
+                                if (doc.defaultView?.confirm(`Delete workspace "${entry.config.name}"?`)) {
+                                    const idx = history.entries.indexOf(entry);
+                                    if (idx > -1) {
+                                        history.entries.splice(idx, 1);
+                                        await tableStore.saveHistory(history);
+                                        // If deleted active one, maybe reset? keeping it simple for now
+                                        renderList();
+                                    }
+                                }
+                            }
+                        }]
+                    });
+                    deleteBtn.addEventListener("mouseenter", () => (deleteBtn.style.opacity = "1"));
+                    deleteBtn.addEventListener("mouseleave", () => (deleteBtn.style.opacity = "0.6"));
+
+                    actions.appendChild(deleteBtn);
+                    row.appendChild(actions);
+
+                    // Highlight active
+                    if (isActive) {
+                        const check = ztoolkit.UI.createElement(doc, "div", {
+                            properties: { innerText: "✓" },
+                            styles: { fontSize: "14px", color: "var(--highlight-primary)", marginRight: "6px" }
+                        });
+                        row.insertBefore(check, info);
+                    }
+
+                    listContainer.appendChild(row);
+                }
+            }
+        };
+
+        await renderList();
+        content.appendChild(listContainer);
+        dropdown.appendChild(content);
+
+        // Insert after toolbar in the DOM flow (same as Add Papers dropdown)
+        toolbar.parentNode.insertBefore(dropdown, toolbar.nextSibling);
+
+        // Animate in
+        setTimeout(() => {
+            dropdown.style.opacity = "1";
+            dropdown.style.transform = "translateY(0)";
+        }, 10);
+    }
+
+    /**
+     * Show picker to add table items to chat - Matched to Add Papers style
+     */
+    private static async showChatTablePicker(doc: Document, stateManager: ReturnType<typeof getChatStateManager>): Promise<void> {
+        // Toggle existing dropdown
+        const existing = doc.getElementById("chat-table-picker-dropdown") as HTMLElement;
+        if (existing) {
+            existing.style.opacity = "0";
+            existing.style.transform = "translateY(-10px)";
+            setTimeout(() => existing.remove(), 200);
+            return;
+        }
+
+        const selectionArea = doc.getElementById("selection-area");
+        if (!selectionArea || !selectionArea.parentNode) return;
+
+        // Create dropdown panel
+        const dropdown = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "chat-table-picker-dropdown" },
+            styles: {
+                backgroundColor: "var(--background-primary)",
+                borderRadius: "8px",
+                padding: "0",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.12)",
+                overflow: "hidden",
+                border: "1px solid var(--border-primary)",
+                transition: "all 0.2s ease-out",
+                opacity: "0",
+                transform: "translateY(-10px)",
+                marginTop: "8px",
+                marginLeft: "8px",
+                marginRight: "8px"
+            }
+        });
+
+        // Header
+        const header = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                background: "linear-gradient(135deg, var(--highlight-primary) 0%, color-mix(in srgb, var(--highlight-primary) 80%, purple) 100%)",
+                padding: "10px 14px",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "12px"
+            }
+        });
+
+        const headerTitle = ztoolkit.UI.createElement(doc, "div", {
+            properties: { innerText: "📊 Add From Table" },
+            styles: {
+                fontSize: "13px",
+                fontWeight: "600",
+                color: "var(--highlight-text)",
+                textShadow: "0 1px 2px rgba(0,0,0,0.1)"
+            }
+        });
+        header.appendChild(headerTitle);
+
+        const closeBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "✕" },
+            styles: {
+                background: "rgba(0,0,0,0.1)",
+                border: "none",
+                borderRadius: "50%",
+                width: "22px",
+                height: "22px",
+                cursor: "pointer",
+                color: "var(--highlight-text)",
+                fontSize: "11px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+            },
+            listeners: [{
+                type: "click", listener: () => {
+                    dropdown.style.opacity = "0";
+                    dropdown.style.transform = "translateY(-10px)";
+                    setTimeout(() => dropdown.remove(), 200);
+                }
+            }]
+        });
+        header.appendChild(closeBtn);
+        dropdown.appendChild(header);
+
+        // Content
+        const content = ztoolkit.UI.createElement(doc, "div", {
+            styles: { padding: "10px 14px", display: "flex", flexDirection: "column", gap: "8px" }
+        });
+
+        const listContainer = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                maxHeight: "240px",
+                overflowY: "auto",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                backgroundColor: "var(--background-secondary)"
+            }
+        });
+
+        // Load tables
+        const tableStore = getTableStore();
+        const history = await tableStore.loadHistory();
+
         if (history.entries.length === 0) {
-            const emptyMsg = ztoolkit.UI.createElement(doc, "div", {
-                properties: { innerText: "No saved workspaces yet.\nSave your current workspace using 💾" },
-                styles: { padding: "20px", textAlign: "center", color: "var(--text-tertiary)", whiteSpace: "pre-line" }
-            });
-            listContainer.appendChild(emptyMsg);
+            listContainer.appendChild(ztoolkit.UI.createElement(doc, "div", {
+                properties: { innerText: "No saved tables found." },
+                styles: { padding: "20px", textAlign: "center", color: "var(--text-secondary)", fontSize: "12px" }
+            }));
         } else {
             for (const entry of history.entries) {
                 const row = ztoolkit.UI.createElement(doc, "div", {
                     styles: {
-                        padding: "10px 12px",
+                        padding: "8px 10px",
                         borderBottom: "1px solid var(--border-primary)",
                         cursor: "pointer",
                         display: "flex",
                         justifyContent: "space-between",
-                        alignItems: "center"
-                    },
-                    listeners: [{
-                        type: "click",
-                        listener: async () => {
-                            // Load this config
-                            currentTableConfig = { ...entry.config };
-                            const tableStore = getTableStore();
-                            await tableStore.saveConfig(currentTableConfig);
-                            overlay.remove();
-                            if (currentContainer && currentItem) {
-                                this.renderInterface(currentContainer, currentItem);
-                            }
-                        }
-                    }]
+                        alignItems: "center",
+                        transition: "background-color 0.1s"
+                    }
                 });
+                row.addEventListener("mouseenter", () => { row.style.backgroundColor = "var(--background-primary)"; });
+                row.addEventListener("mouseleave", () => { row.style.backgroundColor = ""; });
 
                 const info = ztoolkit.UI.createElement(doc, "div", {
-                    styles: { flex: "1", overflow: "hidden" }
+                    styles: { flex: "1", overflow: "hidden", marginRight: "10px" }
                 });
+
                 const nameEl = ztoolkit.UI.createElement(doc, "div", {
-                    properties: { innerText: entry.config.name || 'Unnamed Workspace' },
-                    styles: { fontSize: "13px", fontWeight: "500", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+                    properties: { innerText: entry.config.name || "Untitled Table" },
+                    styles: { fontSize: "12px", fontWeight: "600", color: "var(--text-primary)" }
                 });
+
+                const count = entry.config.addedPaperIds?.length || 0;
                 const metaEl = ztoolkit.UI.createElement(doc, "div", {
-                    properties: { innerText: `${entry.config.addedPaperIds?.length || 0} papers • ${new Date(entry.usedAt).toLocaleDateString()}` },
-                    styles: { fontSize: "11px", color: "var(--text-secondary)" }
+                    properties: { innerText: `${count} papers • ${new Date(entry.usedAt).toLocaleDateString()}` },
+                    styles: { fontSize: "11px", color: "var(--text-secondary)", marginTop: "1px" }
                 });
+
                 info.appendChild(nameEl);
                 info.appendChild(metaEl);
                 row.appendChild(info);
 
-                // Delete button
-                const deleteBtn = ztoolkit.UI.createElement(doc, "span", {
-                    properties: { innerText: "🗑" },
-                    styles: { fontSize: "14px", color: "#c62828", padding: "4px 8px", cursor: "pointer" },
+                const addBtn = ztoolkit.UI.createElement(doc, "button", {
+                    properties: { innerText: "Add Table Context" },
+                    styles: {
+                        padding: "4px 10px",
+                        borderRadius: "12px",
+                        border: "1px solid var(--highlight-primary)",
+                        backgroundColor: "transparent",
+                        color: "var(--highlight-primary)",
+                        fontSize: "11px",
+                        cursor: "pointer",
+                        fontWeight: "600",
+                        transition: "all 0.15s"
+                    },
                     listeners: [{
                         type: "click",
                         listener: async (e: Event) => {
                             e.stopPropagation();
-                            // Remove from history
-                            const tableStore = getTableStore();
-                            const currentHistory = await tableStore.loadHistory();
-                            currentHistory.entries = currentHistory.entries.filter(h => h.config.id !== entry.config.id);
-                            await tableStore.saveHistory(currentHistory);
-                            row.remove();
+                            const paperIds = entry.config.addedPaperIds || [];
+                            if (paperIds.length === 0) {
+                                doc.defaultView?.alert("This table is empty.");
+                                return;
+                            }
+
+                            // Build table context from the saved table data
+                            const columns = entry.config.columns?.filter(c => c.visible) || defaultColumns.filter(c => c.visible);
+                            const columnNames = columns.map(c => c.name);
+                            const generatedData = entry.config.generatedData || {};
+
+                            // Format table data as text context
+                            let tableContent = '';
+                            let rowCount = 0;
+
+                            for (const paperId of paperIds) {
+                                const item = Zotero.Items.get(paperId);
+                                if (!item || !item.isRegularItem()) continue;
+
+                                const paperTitle = item.getField('title') as string || 'Untitled';
+                                const creators = item.getCreators();
+                                const authorNames = creators.map(c => `${c.firstName || ''} ${c.lastName || ''}`.trim()).join(', ') || 'Unknown';
+                                const year = item.getField('year') as string || '';
+                                const noteIDs = item.getNotes();
+                                const persistedData = generatedData[paperId] || {};
+
+                                // Build row data
+                                const rowData: Record<string, string> = {
+                                    title: paperTitle,
+                                    author: authorNames,
+                                    year: year,
+                                    sources: String(noteIDs.length),
+                                    ...persistedData
+                                };
+
+                                // Format as readable entry
+                                tableContent += `\n### ${paperTitle}\n`;
+                                for (const col of columns) {
+                                    if (col.id === 'title') continue; // Title already in header
+                                    const value = rowData[col.id] || '';
+                                    if (value) {
+                                        tableContent += `- **${col.name}**: ${value}\n`;
+                                    }
+                                }
+                                rowCount++;
+                            }
+
+                            // Create table selection object
+                            const tableSelection: SelectedTable = {
+                                id: entry.config.id || `table_${Date.now()}`,
+                                type: 'table',
+                                title: entry.config.name || 'Untitled Table',
+                                content: tableContent,
+                                rowCount: rowCount,
+                                columnNames: columnNames
+                            };
+
+                            // Add to state manager
+                            stateManager.addSelection('tables', tableSelection);
+                            this.reRenderSelectionArea();
+
+                            // Feedback
+                            addBtn.innerText = "✓ Added";
+                            addBtn.style.backgroundColor = "var(--highlight-primary)";
+                            addBtn.style.color = "var(--highlight-text)";
+                            setTimeout(() => {
+                                dropdown.style.opacity = "0";
+                                setTimeout(() => dropdown.remove(), 200);
+                            }, 500);
                         }
                     }]
                 });
-                row.appendChild(deleteBtn);
-
-                const loadIcon = ztoolkit.UI.createElement(doc, "span", {
-                    properties: { innerText: "→" },
-                    styles: { fontSize: "16px", color: "var(--highlight-primary)", padding: "4px" }
+                addBtn.addEventListener("mouseenter", () => {
+                    addBtn.style.backgroundColor = "var(--highlight-primary)";
+                    addBtn.style.color = "var(--highlight-text)";
                 });
-                row.appendChild(loadIcon);
+                addBtn.addEventListener("mouseleave", () => {
+                    if (addBtn.innerText !== "✓ Added") {
+                        addBtn.style.backgroundColor = "transparent";
+                        addBtn.style.color = "var(--highlight-primary)";
+                    }
+                });
 
-                row.addEventListener("mouseenter", () => { row.style.backgroundColor = "var(--background-secondary)"; });
-                row.addEventListener("mouseleave", () => { row.style.backgroundColor = ""; });
-
+                row.appendChild(addBtn);
                 listContainer.appendChild(row);
             }
         }
 
-        dialog.appendChild(listContainer);
+        content.appendChild(listContainer);
+        dropdown.appendChild(content);
 
-        // Close button
+        // Done button logic (optional, users can just close)
         const buttonRow = ztoolkit.UI.createElement(doc, "div", {
-            styles: { display: "flex", justifyContent: "flex-end", gap: "8px" }
+            styles: { padding: "8px 14px", borderTop: "1px solid var(--border-primary)", display: "flex", justifyContent: "flex-end" }
         });
-        const closeBtn = ztoolkit.UI.createElement(doc, "button", {
-            properties: { innerText: "Close" },
+        const doneBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "Done" },
             styles: {
-                padding: "8px 16px",
+                padding: "6px 14px",
                 border: "1px solid var(--border-primary)",
                 borderRadius: "6px",
+                fontSize: "12px",
                 backgroundColor: "var(--background-secondary)",
                 cursor: "pointer"
             },
             listeners: [{
                 type: "click",
                 listener: () => {
-                    overlay.remove();
+                    dropdown.style.opacity = "0";
+                    dropdown.style.transform = "translateY(-10px)";
+                    setTimeout(() => dropdown.remove(), 200);
                 }
             }]
         });
-        buttonRow.appendChild(closeBtn);
-        dialog.appendChild(buttonRow);
+        buttonRow.appendChild(doneBtn);
+        dropdown.appendChild(buttonRow);
 
-        overlay.appendChild(dialog);
-        overlay.addEventListener("click", (e) => {
-            if (e.target === overlay) {
-                overlay.remove();
-            }
-        });
+        selectionArea.parentNode.insertBefore(dropdown, selectionArea.nextSibling);
 
-        if (doc.body) {
-            doc.body.appendChild(overlay);
-        } else {
-            (doc.documentElement || doc).appendChild(overlay);
-        }
+        // Animate in
+        setTimeout(() => {
+            dropdown.style.opacity = "1";
+            dropdown.style.transform = "translateY(0)";
+        }, 10);
     }
 
     /**
@@ -3794,11 +4260,45 @@ ${tableRows}  </tbody>
         });
         selectionArea.appendChild(addByTagBtn);
 
+        // Add Table button
+        const addTableBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "📊 Add Table" },
+            styles: {
+                padding: "4px 10px",
+                fontSize: "11px",
+                border: "1px dashed var(--highlight-primary)",
+                borderRadius: "4px",
+                backgroundColor: "transparent",
+                cursor: "pointer",
+                color: "var(--highlight-primary)"
+            },
+            listeners: [{
+                type: "click",
+                listener: () => {
+                    Zotero.debug("[Seer AI] Add Table button clicked");
+                    this.showChatTablePicker(doc, stateManager);
+                }
+            }]
+        });
+        selectionArea.appendChild(addTableBtn);
+
         // Render tag chips (if any selected)
         if (states.tags.length > 0) {
             states.tags.forEach(tag => {
                 const chip = this.createChip(doc, tag.title, selectionConfigs.tags, () => {
                     stateManager.removeSelection('tags', tag.id);
+                    this.reRenderSelectionArea();
+                });
+                selectionArea.appendChild(chip);
+            });
+        }
+
+        // Render table chips (if any selected)
+        if (states.tables.length > 0) {
+            states.tables.forEach(table => {
+                const chipLabel = `${table.title} (${table.rowCount} rows)`;
+                const chip = this.createChip(doc, chipLabel, selectionConfigs.tables, () => {
+                    stateManager.removeSelection('tables', table.id);
                     this.reRenderSelectionArea();
                 });
                 selectionArea.appendChild(chip);
@@ -5240,7 +5740,7 @@ ${tableRows}  </tbody>
         const contentDiv = streamingDiv.querySelector('[data-content]') as HTMLElement;
 
         try {
-            // Build context from all selected items and notes
+            // Build context from all selected items, notes, and tables
             const states = stateManager.getStates();
             let context = "=== Selected Papers ===\n";
 
@@ -5263,11 +5763,21 @@ ${tableRows}  </tbody>
                 }
             }
 
-            const systemPrompt = `You are a helpful research assistant for Zotero. You help users understand and analyze their academic papers and notes.
+            // Include table context
+            if (states.tables.length > 0) {
+                context += "\n\n=== Table Data ===";
+                for (const table of states.tables) {
+                    context += `\n\n--- Table: ${table.title} (${table.rowCount} rows) ---`;
+                    context += `\nColumns: ${table.columnNames.join(', ')}`;
+                    context += `\n${table.content}`;
+                }
+            }
+
+            const systemPrompt = `You are a helpful research assistant for Zotero. You help users understand and analyze their academic papers, notes, and research data tables.
 
 ${context}
 
-Be concise, accurate, and helpful. When referencing papers, cite them by title or author.`;
+Be concise, accurate, and helpful. When referencing papers, cite them by title or author. When referencing table data, cite the table name and relevant columns.`;
 
             // Check if we should include images (vision mode)
             const options = stateManager.getOptions();
@@ -5440,7 +5950,7 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
         const contentDiv = streamingDiv.querySelector('[data-content]') as HTMLElement;
 
         try {
-            // Build context from selected items and notes
+            // Build context from selected items, notes, and tables
             const states = stateManager.getStates();
             let context = "=== Selected Papers ===\n";
 
@@ -5462,11 +5972,21 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
                 }
             }
 
-            const systemPrompt = `You are a helpful research assistant for Zotero. You help users understand and analyze their academic papers and notes.
+            // Include table context
+            if (states.tables.length > 0) {
+                context += "\n\n=== Table Data ===";
+                for (const table of states.tables) {
+                    context += `\n\n--- Table: ${table.title} (${table.rowCount} rows) ---`;
+                    context += `\nColumns: ${table.columnNames.join(', ')}`;
+                    context += `\n${table.content}`;
+                }
+            }
+
+            const systemPrompt = `You are a helpful research assistant for Zotero. You help users understand and analyze their academic papers, notes, and research data tables.
 
 ${context}
 
-Be concise, accurate, and helpful. When referencing papers, cite them by title or author.`;
+Be concise, accurate, and helpful. When referencing papers, cite them by title or author. When referencing table data, cite the table name and relevant columns.`;
 
             // Build vision-compatible messages with pasted images
             const userMessageContent: VisionMessageContentPart[] = [
@@ -5704,59 +6224,31 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
 
     /**
      * Copy text to clipboard and show feedback
+     * Uses ztoolkit.Clipboard for Zotero compatibility
      */
     private static copyToClipboard(text: string, buttonElement: HTMLElement) {
+        const originalText = buttonElement.innerText;
+
         try {
-            // Use navigator.clipboard API
-            navigator.clipboard.writeText(text).then(() => {
-                // Visual feedback
-                const originalText = buttonElement.innerText;
-                buttonElement.innerText = "✓";
-                setTimeout(() => {
-                    buttonElement.innerText = originalText;
-                }, 1500);
+            // Use ztoolkit.Clipboard which works in Zotero's environment
+            new ztoolkit.Clipboard()
+                .addText(text, "text/unicode")
+                .copy();
 
-                Zotero.debug("[Seer AI] Copied message to clipboard");
-            }).catch((e) => {
-                Zotero.debug(`[Seer AI] Clipboard API failed: ${e}`);
-                // Fallback: create a temporary textarea
-                this.fallbackCopyToClipboard(text, buttonElement);
-            });
-        } catch (e) {
-            Zotero.debug(`[Seer AI] Failed to copy to clipboard: ${e}`);
-            this.fallbackCopyToClipboard(text, buttonElement);
-        }
-    }
-
-    /**
-     * Fallback clipboard copy for older environments
-     */
-    private static fallbackCopyToClipboard(text: string, buttonElement: HTMLElement) {
-        try {
-            const doc = buttonElement.ownerDocument;
-            if (!doc || !doc.body) {
-                Zotero.debug("[Seer AI] Cannot access document for clipboard fallback");
-                return;
-            }
-            const textarea = doc.createElement('textarea');
-            textarea.value = text;
-            textarea.style.position = 'fixed';
-            textarea.style.left = '-9999px';
-            doc.body.appendChild(textarea);
-            textarea.select();
-            doc.execCommand('copy');
-            doc.body.removeChild(textarea);
-
-            // Visual feedback
-            const originalText = buttonElement.innerText;
+            // Visual feedback - success
             buttonElement.innerText = "✓";
             setTimeout(() => {
                 buttonElement.innerText = originalText;
             }, 1500);
 
-            Zotero.debug("[Seer AI] Copied message to clipboard (fallback)");
+            Zotero.debug("[Seer AI] Copied message to clipboard");
         } catch (e) {
-            Zotero.debug(`[Seer AI] Fallback copy failed: ${e}`);
+            Zotero.debug(`[Seer AI] ztoolkit.Clipboard failed: ${e}`);
+            // Visual feedback - failure
+            buttonElement.innerText = "❌";
+            setTimeout(() => {
+                buttonElement.innerText = originalText;
+            }, 1500);
         }
     }
 
@@ -5949,11 +6441,21 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
                 }
             }
 
-            const systemPrompt = `You are a helpful research assistant for Zotero. You help users understand and analyze their academic papers and notes.
+            // Include table context
+            if (states.tables.length > 0) {
+                context += "\n\n=== Table Data ===";
+                for (const table of states.tables) {
+                    context += `\n\n--- Table: ${table.title} (${table.rowCount} rows) ---`;
+                    context += `\nColumns: ${table.columnNames.join(', ')}`;
+                    context += `\n${table.content}`;
+                }
+            }
+
+            const systemPrompt = `You are a helpful research assistant for Zotero. You help users understand and analyze their academic papers, notes, and research data tables.
 
 ${context}
 
-Be concise, accurate, and helpful. When referencing papers, cite them by title or author.`;
+Be concise, accurate, and helpful. When referencing papers, cite them by title or author. When referencing table data, cite the table name and relevant columns.`;
 
             const messages: OpenAIMessage[] = [
                 { role: "system", content: systemPrompt },
