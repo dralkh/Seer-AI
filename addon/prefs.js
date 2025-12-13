@@ -15,3 +15,4 @@ pref("cloudForceOcr", false);
 pref("cloudUseLlm", false);
 pref("modelConfigs", "[]");
 pref("activeModelId", "");
+pref("semanticScholarApiKey", "");

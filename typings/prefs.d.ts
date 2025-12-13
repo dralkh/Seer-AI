@@ -24,6 +24,7 @@ declare namespace _ZoteroTypes {
       "cloudUseLlm": boolean;
       "modelConfigs": string;
       "activeModelId": string;
+      "semanticScholarApiKey": string;
     };
   }
 }

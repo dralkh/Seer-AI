@@ -112,6 +112,27 @@
     </hbox>
   </vbox>
 
+  <html:hr style="margin: 16px 0;" />
+
+  <!-- Semantic Scholar Settings -->
+  <label>
+    <html:h3>Semantic Scholar Integration</html:h3>
+  </label>
+  <vbox style="margin-left: 20px; padding: 10px; background: rgba(0,0,0,0.03); border-radius: 4px;">
+    <hbox align="center" style="margin-bottom: 8px;">
+      <label style="width: 100px;">API Key:</label>
+      <html:input type="password" id="zotero-prefpane-__addonRef__-semanticScholarApiKey" placeholder="S2 API Key"
+        style="flex: 1; min-width: 200px;"></html:input>
+    </hbox>
+    <hbox align="center">
+      <html:a href="https://www.semanticscholar.org/product/api#api-key"
+        style="color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px;"
+        onclick="Zotero.launchURL(this.href); return false;">
+        📖 Get API Key
+      </html:a>
+    </hbox>
+  </vbox>
+
 </groupbox>
 <vbox style="margin-top: 16px;">
   <html:label data-l10n-id="pref-help" style="font-size: 11px; color: #666;"

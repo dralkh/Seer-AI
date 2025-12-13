@@ -209,6 +209,9 @@ function bindPrefEvents() {
   // Cloud-specific settings
   bindCheckbox(`zotero-prefpane-${config.addonRef}-cloudForceOcr`, "cloudForceOcr");
   bindCheckbox(`zotero-prefpane-${config.addonRef}-cloudUseLlm`, "cloudUseLlm");
+
+  // Semantic Scholar settings
+  bindInput(`zotero-prefpane-${config.addonRef}-semanticScholarApiKey`, "semanticScholarApiKey");
 }
 
 /**

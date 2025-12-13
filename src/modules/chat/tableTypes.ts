@@ -149,4 +149,32 @@ export const defaultTableHistory: TableHistory = {
 };
 
 // Active tab state
-export type AssistantTab = 'chat' | 'table';
+export type AssistantTab = 'chat' | 'table' | 'search';
+
+// ==================== Search Tab Types ====================
+
+// Search state persisted between sessions
+export interface SearchState {
+    query: string;
+    limit: number;
+    yearStart?: string;
+    yearEnd?: string;
+    openAccessPdf: boolean;
+    hideLibraryDuplicates: boolean;
+    fieldsOfStudy: string[];
+    publicationTypes: string[];
+    minCitationCount?: number;
+    venue?: string;
+    sortBy: 'relevance' | 'citationCount:desc' | 'publicationDate:desc';
+}
+
+export const defaultSearchState: SearchState = {
+    query: '',
+    limit: 20,
+    openAccessPdf: false,
+    hideLibraryDuplicates: true,
+    fieldsOfStudy: [],
+    publicationTypes: [],
+    sortBy: 'relevance',
+};
+

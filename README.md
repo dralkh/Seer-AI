@@ -271,16 +271,12 @@ Moving beyond keyword matching to understanding the meaning of your queries.
 - **Confidence Scores** — AI-generated confidence ratings for each extracted data point.
 - **Source Highlighting** — Click a cell to see the exact passage in the paper where the data came from.
 
-### 5. Workspace Integration
-- **Chat with Workspace** — seamless integration to use your defined workspace (table data, added papers) as context for chat conversations.
-- **Workspace-Aware Prompts** — Prompts that can reference structured data from your tables.
+### 5. Semantic Scholar Search Agent Tab
+- **Saved Search History**: Saved search history shown in drop down of Past searches button - when clicking one of the list it would return user to previous search operation with all data saved and persisted - there would be button also to clear saved search history 
 
-### 6. Semantic Scholar Search Agent Tab
-A dedicated tab for searching and exploring papers using Semantic Scholar's API.
-- **Agentic Search**: Autonomous agent that searches, filters, and recommends papers based on your criteria.
-- **Graph Exploration**: Visualize citation networks and find connected papers.
-- **Direct Import**: One-click import of discovered papers directly into your Zotero library.
-- **Firecrawl Integration**: Extract pdf url from semantic scholar or Firecrawl if needed and import it to zotero.
+- **Direct Import**: One-click import of discovered papers directly into your Zotero library (Action button, compatible with zotero framework importing all variables of results. this action button would depend on default selection of collection/folder dropdown from search result to be saved there).
+
+ **Firecrawl API Integration**: Firecrawl api (url api and api key set in settings as user may use local or cloud firecrawl instance) is used to obtain first result of search result item that doesnt contain pdf url based on result list metadata to be searched on from semantic scholar to be given as hyperlink (it would be action button within search list of search tab)
 
 
 ### Others

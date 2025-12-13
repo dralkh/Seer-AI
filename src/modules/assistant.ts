@@ -15,8 +15,21 @@ import {
     AssistantTab,
     ColumnPreset,
     defaultColumns,
+    SearchState,
+    defaultSearchState,
 } from "./chat/tableTypes";
 import { OcrService } from "./ocr";
+import {
+    semanticScholarService,
+    SemanticScholarPaper,
+    SemanticScholarAuthorDetails,
+    SearchResult,
+    FIELDS_OF_STUDY,
+    PUBLICATION_TYPES,
+} from "./semanticScholar";
+
+// Debounce timer for autocomplete
+let autocompleteTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Stored messages for conversation continuity (loaded from persistence)
 let conversationMessages: ChatMessage[] = [];
@@ -33,6 +46,50 @@ let activeTab: AssistantTab = 'chat';
 // Table state cache
 let currentTableConfig: TableConfig | null = null;
 let currentTableData: TableData | null = null;
+
+// Search state
+let currentSearchState: SearchState = { ...defaultSearchState };
+let currentSearchResults: SemanticScholarPaper[] = [];
+let currentSearchToken: string | null = null;  // For pagination
+let totalSearchResults: number = 0;  // Total count from API
+let isSearching = false;
+
+// Filter presets
+interface FilterPreset {
+    name: string;
+    filters: SearchState;
+}
+
+function getFilterPresets(): FilterPreset[] {
+    try {
+        const stored = Zotero.Prefs.get("extensions.seer-ai.filterPresets") as string;
+        return stored ? JSON.parse(stored) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveFilterPresets(presets: FilterPreset[]): void {
+    Zotero.Prefs.set("extensions.seer-ai.filterPresets", JSON.stringify(presets));
+}
+
+function addFilterPreset(name: string, filters: SearchState): void {
+    const presets = getFilterPresets();
+    presets.push({ name, filters: { ...filters } });
+    saveFilterPresets(presets);
+}
+
+function deleteFilterPreset(name: string): void {
+    const presets = getFilterPresets().filter(p => p.name !== name);
+    saveFilterPresets(presets);
+}
+
+function getNextPresetName(): string {
+    const presets = getFilterPresets();
+    let num = 1;
+    while (presets.some(p => p.name === `Preset ${num}`)) num++;
+    return `Preset ${num}`;
+}
 
 // DataLabs service for PDF-to-note conversion
 const ocrService = new OcrService();
@@ -259,9 +316,12 @@ export class Assistant {
         if (activeTab === 'chat') {
             const chatTabContent = await this.createChatTabContent(doc, item, stateManager);
             tabContent.appendChild(chatTabContent);
-        } else {
+        } else if (activeTab === 'table') {
             const tableTabContent = await this.createTableTabContent(doc, item);
             tabContent.appendChild(tableTabContent);
+        } else if (activeTab === 'search') {
+            const searchTabContent = await this.createSearchTabContent(doc, item);
+            tabContent.appendChild(searchTabContent);
         }
 
         mainContainer.appendChild(tabContent);
@@ -286,7 +346,8 @@ export class Assistant {
 
         const tabs: { id: AssistantTab; label: string; icon: string }[] = [
             { id: 'chat', label: 'Chat', icon: '💬' },
-            { id: 'table', label: 'Papers Table', icon: '📊' }
+            { id: 'table', label: 'Papers Table', icon: '📊' },
+            { id: 'search', label: 'Search', icon: '🔍' },
         ];
 
         tabs.forEach(tab => {
@@ -428,6 +489,1919 @@ export class Assistant {
         tableContainer.appendChild(tableWrapper);
 
         return tableContainer;
+    }
+
+    /**
+     * Create the Search tab content with Semantic Scholar integration
+     */
+    private static async createSearchTabContent(doc: Document, item: Zotero.Item): Promise<HTMLElement> {
+        const searchContainer = ztoolkit.UI.createElement(doc, "div", {
+            properties: { className: "search-tab-container" },
+            styles: {
+                display: "flex",
+                flexDirection: "column",
+                height: "100%",
+                overflow: "hidden",
+                gap: "8px",
+                padding: "8px"
+            }
+        });
+
+        // === SEARCH INPUT ===
+        const searchInputContainer = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                display: "flex",
+                gap: "8px",
+                alignItems: "center"
+            }
+        });
+
+        const searchInput = ztoolkit.UI.createElement(doc, "input", {
+            attributes: {
+                type: "text",
+                placeholder: "🔍 Search Semantic Scholar...",
+                value: currentSearchState.query || ""
+            },
+            properties: { id: "semantic-scholar-search-input" },
+            styles: {
+                flex: "1",
+                padding: "10px 14px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                fontSize: "13px",
+                backgroundColor: "var(--background-primary)",
+                color: "var(--text-primary)"
+            }
+        }) as HTMLInputElement;
+
+        const searchBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "Search" },
+            styles: {
+                padding: "10px 20px",
+                backgroundColor: "var(--highlight-primary)",
+                color: "var(--highlight-text)",
+                border: "none",
+                borderRadius: "6px",
+                fontSize: "13px",
+                fontWeight: "500",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: async () => {
+                    currentSearchState.query = searchInput.value;
+                    currentSearchResults = [];
+                    currentSearchToken = null;
+                    await this.performSearch(doc);
+                }
+            }]
+        });
+
+        // Enter key triggers search
+        searchInput.addEventListener("keypress", async (e: Event) => {
+            const ke = e as KeyboardEvent;
+            if (ke.key === "Enter") {
+                currentSearchState.query = searchInput.value;
+                currentSearchResults = [];
+                currentSearchToken = null;
+                await this.performSearch(doc);
+            }
+        });
+
+        // Query syntax help tooltip
+        const syntaxHelp = ztoolkit.UI.createElement(doc, "span", {
+            properties: { innerText: "❓" },
+            attributes: { title: 'Syntax: "phrase" | word1+word2 | word1|word2 | -exclude | word* | word~3' },
+            styles: {
+                fontSize: "14px",
+                cursor: "help",
+                opacity: "0.6"
+            }
+        });
+
+        // Suggestions button (replaces auto-dropdown with user-triggered action)
+        const suggestionsBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "💡", title: "Get suggestions" },
+            styles: {
+                padding: "8px 10px",
+                backgroundColor: "var(--background-secondary)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                fontSize: "14px",
+                cursor: "pointer",
+                marginLeft: "4px"
+            }
+        });
+
+        // Suggestions dropdown container
+        const suggestionsDropdown = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "suggestions-dropdown" },
+            styles: {
+                display: "none",
+                position: "absolute",
+                top: "100%",
+                left: "0",
+                right: "0",
+                marginTop: "4px",
+                backgroundColor: "var(--background-primary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+                zIndex: "9999",
+                maxHeight: "250px",
+                overflowY: "auto"
+            }
+        });
+
+        // Close dropdown when clicking outside
+        doc.addEventListener("click", (e: Event) => {
+            if (!suggestionsDropdown.contains(e.target as Node) && e.target !== suggestionsBtn) {
+                suggestionsDropdown.style.display = "none";
+            }
+        });
+
+        // Suggestions button click handler
+        suggestionsBtn.addEventListener("click", async () => {
+            const query = searchInput.value.trim();
+
+            if (query.length < 2) {
+                // Show message if query too short
+                suggestionsDropdown.innerHTML = "";
+                const msgDiv = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "16px",
+                        textAlign: "center",
+                        color: "var(--text-secondary)",
+                        fontSize: "12px"
+                    }
+                });
+                msgDiv.innerHTML = "Type at least 2 characters to get suggestions";
+                suggestionsDropdown.appendChild(msgDiv);
+                suggestionsDropdown.style.display = "block";
+                return;
+            }
+
+            // Show loading state
+            suggestionsDropdown.innerHTML = "";
+            const loadingDiv = ztoolkit.UI.createElement(doc, "div", {
+                styles: {
+                    padding: "16px",
+                    textAlign: "center",
+                    color: "var(--text-secondary)",
+                    fontSize: "12px"
+                }
+            });
+            loadingDiv.innerHTML = "⏳ Loading suggestions...";
+            suggestionsDropdown.appendChild(loadingDiv);
+            suggestionsDropdown.style.display = "block";
+
+            try {
+                const suggestions = await semanticScholarService.autocomplete(query);
+                suggestionsDropdown.innerHTML = "";
+
+                if (suggestions.length === 0) {
+                    const noResults = ztoolkit.UI.createElement(doc, "div", {
+                        styles: {
+                            padding: "16px",
+                            textAlign: "center",
+                            color: "var(--text-secondary)",
+                            fontSize: "12px"
+                        }
+                    });
+                    noResults.innerHTML = `No suggestions found for "${query}"`;
+                    suggestionsDropdown.appendChild(noResults);
+                    return;
+                }
+
+                // Header
+                const header = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "8px 12px",
+                        fontSize: "11px",
+                        fontWeight: "600",
+                        color: "var(--text-secondary)",
+                        borderBottom: "1px solid var(--border-primary)",
+                        backgroundColor: "var(--background-secondary)"
+                    }
+                });
+                header.innerHTML = `💡 ${suggestions.length} suggestion${suggestions.length > 1 ? 's' : ''} for "${query}"`;
+                suggestionsDropdown.appendChild(header);
+
+                suggestions.slice(0, 8).forEach(sugg => {
+                    const item = ztoolkit.UI.createElement(doc, "div", {
+                        styles: {
+                            padding: "10px 12px",
+                            fontSize: "12px",
+                            cursor: "pointer",
+                            borderBottom: "1px solid var(--border-primary)",
+                            lineHeight: "1.4"
+                        }
+                    });
+                    item.innerText = sugg.title;
+
+                    item.addEventListener("mouseenter", () => {
+                        item.style.backgroundColor = "var(--background-secondary)";
+                    });
+                    item.addEventListener("mouseleave", () => {
+                        item.style.backgroundColor = "transparent";
+                    });
+                    item.addEventListener("click", async () => {
+                        searchInput.value = sugg.title;
+                        currentSearchState.query = sugg.title;
+                        suggestionsDropdown.style.display = "none";
+                        currentSearchResults = [];
+                        await this.performSearch(doc);
+                    });
+
+                    suggestionsDropdown.appendChild(item);
+                });
+            } catch (e) {
+                Zotero.debug(`[Seer AI] Suggestions error: ${e}`);
+                suggestionsDropdown.innerHTML = "";
+                const errorDiv = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "16px",
+                        textAlign: "center",
+                        color: "var(--error-color, #d32f2f)",
+                        fontSize: "12px"
+                    }
+                });
+                errorDiv.innerHTML = "⚠️ Failed to load suggestions";
+                suggestionsDropdown.appendChild(errorDiv);
+            }
+        });
+
+        // AI Query Refiner button (🤖)
+        const aiRefineBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "🤖", title: "AI: Refine query for Semantic Scholar" },
+            styles: {
+                padding: "8px 10px",
+                backgroundColor: "var(--background-secondary)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                fontSize: "14px",
+                cursor: "pointer",
+                marginLeft: "4px"
+            }
+        });
+
+        // AI Refine dropdown container
+        const aiRefineDropdown = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "ai-refine-dropdown" },
+            styles: {
+                display: "none",
+                position: "absolute",
+                top: "100%",
+                left: "0",
+                right: "0",
+                marginTop: "4px",
+                backgroundColor: "var(--background-primary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                boxShadow: "0 4px 16px rgba(0,0,0,0.15)",
+                zIndex: "9999",
+                maxHeight: "300px",
+                overflowY: "auto"
+            }
+        });
+
+        // Close AI dropdown when clicking outside
+        doc.addEventListener("click", (e: Event) => {
+            if (!aiRefineDropdown.contains(e.target as Node) && e.target !== aiRefineBtn) {
+                aiRefineDropdown.style.display = "none";
+            }
+        });
+
+        // AI Refine button click handler
+        aiRefineBtn.addEventListener("click", async () => {
+            const userInput = searchInput.value.trim();
+
+            if (userInput.length < 3) {
+                aiRefineDropdown.innerHTML = "";
+                const msgDiv = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "16px",
+                        textAlign: "center",
+                        color: "var(--text-secondary)",
+                        fontSize: "12px"
+                    }
+                });
+                msgDiv.innerHTML = "Enter your search criteria, research question, or PICO/FINER parameters";
+                aiRefineDropdown.appendChild(msgDiv);
+                aiRefineDropdown.style.display = "block";
+                return;
+            }
+
+            // Check for model config
+            const activeModel = getActiveModelConfig();
+            if (!activeModel) {
+                aiRefineDropdown.innerHTML = "";
+                const errorDiv = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "16px",
+                        textAlign: "center",
+                        color: "var(--error-color, #d32f2f)",
+                        fontSize: "12px"
+                    }
+                });
+                errorDiv.innerHTML = "⚠️ No AI model configured. Please add a model in Settings.";
+                aiRefineDropdown.appendChild(errorDiv);
+                aiRefineDropdown.style.display = "block";
+                return;
+            }
+
+            // Show loading state
+            aiRefineDropdown.innerHTML = "";
+            const loadingDiv = ztoolkit.UI.createElement(doc, "div", {
+                styles: {
+                    padding: "16px",
+                    textAlign: "center",
+                    color: "var(--text-secondary)",
+                    fontSize: "12px"
+                }
+            });
+            loadingDiv.innerHTML = "🤖 AI is refining your query...";
+            aiRefineDropdown.appendChild(loadingDiv);
+            aiRefineDropdown.style.display = "block";
+
+            try {
+                const systemPrompt = `You are a search query optimization expert for Semantic Scholar academic paper search.
+
+Your task is to convert user input (which may be natural language questions, research objectives, PICO/FINER criteria, PRISMA requirements, or any study parameters) into optimized search queries for Semantic Scholar.
+
+Semantic Scholar Query Syntax:
+- Use + between required terms: "machine learning+healthcare" 
+- Use | for OR between alternatives: "cancer|tumor|neoplasm"
+- Use - to exclude terms: "diabetes -type1"
+- Use quotes for exact phrases: "deep learning"
+- Use * for prefix/suffix wildcard: "neuro*"
+- Use ~ for proximity: "gene~3 expression" (within 3 words)
+
+Guidelines:
+1. Extract key concepts from user input
+2. Include synonyms using | operator
+3. Combine related required terms with +
+4. Exclude irrelevant concepts if mentioned
+5. Use quotes for multi-word concepts
+6. Keep the query focused but comprehensive
+7. Output ONLY the refined search query, nothing else
+
+Examples:
+Input: "I want papers about using AI for diagnosing kidney diseases"
+Output: "artificial intelligence"|"machine learning"|"deep learning"+"kidney disease"|"renal disease"|nephropathy+diagnosis
+
+Input: "PICO: Population=elderly patients, Intervention=exercise, Outcome=cognitive function"
+Output: elderly|geriatric|"older adults"+exercise|"physical activity"+"cognitive function"|cognition|"mental performance"
+
+Input: "Systematic review on COVID-19 vaccines effectiveness"  
+Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|efficacy+"systematic review"|meta-analysis`;
+
+                const messages = [
+                    { role: "system" as const, content: systemPrompt },
+                    { role: "user" as const, content: userInput }
+                ];
+
+                let refinedQuery = "";
+
+                await openAIService.chatCompletionStream(messages, {
+                    onToken: (token) => {
+                        refinedQuery += token;
+                        // Update live
+                        aiRefineDropdown.innerHTML = "";
+                        const previewDiv = ztoolkit.UI.createElement(doc, "div", {
+                            styles: { padding: "12px" }
+                        });
+                        previewDiv.innerHTML = `
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-bottom: 8px;">🤖 AI Refined Query:</div>
+                            <div style="font-family: monospace; font-size: 12px; padding: 8px; background: var(--background-secondary); border-radius: 4px; word-break: break-word;">${refinedQuery}</div>
+                        `;
+                        aiRefineDropdown.appendChild(previewDiv);
+                    },
+                    onComplete: (content) => {
+                        refinedQuery = content.trim();
+                        // Show final result with action buttons
+                        aiRefineDropdown.innerHTML = "";
+
+                        const resultDiv = ztoolkit.UI.createElement(doc, "div", {
+                            styles: { padding: "12px" }
+                        });
+
+                        const headerDiv = ztoolkit.UI.createElement(doc, "div", {
+                            styles: {
+                                fontSize: "11px",
+                                color: "var(--text-secondary)",
+                                marginBottom: "8px"
+                            }
+                        });
+                        headerDiv.innerHTML = "🤖 AI Refined Query:";
+                        resultDiv.appendChild(headerDiv);
+
+                        const queryDiv = ztoolkit.UI.createElement(doc, "div", {
+                            styles: {
+                                fontFamily: "monospace",
+                                fontSize: "12px",
+                                padding: "8px",
+                                backgroundColor: "var(--background-secondary)",
+                                borderRadius: "4px",
+                                wordBreak: "break-word",
+                                marginBottom: "12px"
+                            }
+                        });
+                        queryDiv.innerText = refinedQuery;
+                        resultDiv.appendChild(queryDiv);
+
+                        // Action buttons
+                        const actionsDiv = ztoolkit.UI.createElement(doc, "div", {
+                            styles: {
+                                display: "flex",
+                                gap: "8px"
+                            }
+                        });
+
+                        const useBtn = ztoolkit.UI.createElement(doc, "button", {
+                            properties: { innerText: "✓ Use & Search" },
+                            styles: {
+                                flex: "1",
+                                padding: "8px 12px",
+                                backgroundColor: "#1976d2",
+                                color: "#fff",
+                                border: "none",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                cursor: "pointer"
+                            }
+                        });
+                        useBtn.addEventListener("click", async () => {
+                            searchInput.value = refinedQuery;
+                            currentSearchState.query = refinedQuery;
+                            aiRefineDropdown.style.display = "none";
+                            currentSearchResults = [];
+                            await this.performSearch(doc);
+                        });
+
+                        const copyBtn = ztoolkit.UI.createElement(doc, "button", {
+                            properties: { innerText: "📋 Copy" },
+                            styles: {
+                                padding: "8px 12px",
+                                backgroundColor: "var(--background-secondary)",
+                                color: "var(--text-primary)",
+                                border: "1px solid var(--border-primary)",
+                                borderRadius: "4px",
+                                fontSize: "12px",
+                                cursor: "pointer"
+                            }
+                        });
+                        copyBtn.addEventListener("click", () => {
+                            new ztoolkit.Clipboard().addText(refinedQuery, "text/unicode").copy();
+                            copyBtn.innerText = "✓ Copied!";
+                            setTimeout(() => { copyBtn.innerText = "📋 Copy"; }, 1500);
+                        });
+
+                        actionsDiv.appendChild(useBtn);
+                        actionsDiv.appendChild(copyBtn);
+                        resultDiv.appendChild(actionsDiv);
+                        aiRefineDropdown.appendChild(resultDiv);
+                    },
+                    onError: (error) => {
+                        aiRefineDropdown.innerHTML = "";
+                        const errorDiv = ztoolkit.UI.createElement(doc, "div", {
+                            styles: {
+                                padding: "16px",
+                                textAlign: "center",
+                                color: "var(--error-color, #d32f2f)",
+                                fontSize: "12px"
+                            }
+                        });
+                        errorDiv.innerHTML = `⚠️ AI Error: ${error.message}`;
+                        aiRefineDropdown.appendChild(errorDiv);
+                    }
+                }, {
+                    apiURL: activeModel.apiURL,
+                    apiKey: activeModel.apiKey,
+                    model: activeModel.model
+                });
+            } catch (e) {
+                Zotero.debug(`[Seer AI] AI Refine error: ${e}`);
+                aiRefineDropdown.innerHTML = "";
+                const errorDiv = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "16px",
+                        textAlign: "center",
+                        color: "var(--error-color, #d32f2f)",
+                        fontSize: "12px"
+                    }
+                });
+                errorDiv.innerHTML = "⚠️ Failed to refine query";
+                aiRefineDropdown.appendChild(errorDiv);
+            }
+        });
+
+        // Make input container relative for dropdown positioning
+        searchInputContainer.style.position = "relative";
+        searchInputContainer.appendChild(searchInput);
+        searchInputContainer.appendChild(suggestionsBtn);
+        searchInputContainer.appendChild(aiRefineBtn);
+        searchInputContainer.appendChild(syntaxHelp);
+        searchInputContainer.appendChild(searchBtn);
+        searchInputContainer.appendChild(suggestionsDropdown);
+        searchInputContainer.appendChild(aiRefineDropdown);
+
+        // === FILTERS (shown first) ===
+        const filtersContainer = this.createSearchFilters(doc);
+        searchContainer.appendChild(filtersContainer);
+
+        // === SEARCH INPUT (below filters) ===
+        searchContainer.appendChild(searchInputContainer);
+
+        // === RESULTS AREA ===
+        const resultsArea = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "semantic-scholar-results" },
+            styles: {
+                flex: "1",
+                overflowY: "auto",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                backgroundColor: "var(--background-primary)"
+            }
+        });
+
+        // Render current results or empty state
+        this.renderSearchResults(doc, resultsArea, item);
+        searchContainer.appendChild(resultsArea);
+
+        return searchContainer;
+    }
+
+    /**
+     * Create the advanced search filters UI
+     */
+    private static createSearchFilters(doc: Document): HTMLElement {
+        const container = ztoolkit.UI.createElement(doc, "div", {
+            properties: { className: "search-filters-container" },
+            styles: {
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                overflow: "hidden",
+                marginBottom: "4px"
+            }
+        });
+
+        // Header (non-collapsible, always expanded)
+        const header = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                display: "none"  // Hidden - no header needed
+            }
+        });
+
+        // Filters body (always visible, compact)
+        const filtersBody = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "search-filters-body" },
+            styles: {
+                display: "block",
+                padding: "8px",
+                backgroundColor: "var(--background-primary)"
+            }
+        });
+
+        // === PRESET ROW ===
+        const presetRow = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                display: "flex",
+                gap: "8px",
+                alignItems: "center",
+                marginBottom: "12px",
+                paddingBottom: "12px",
+                borderBottom: "1px solid var(--border-primary)"
+            }
+        });
+
+        const presetLabel = ztoolkit.UI.createElement(doc, "span", {
+            properties: { innerText: "📁 Presets:" },
+            styles: { fontSize: "11px", fontWeight: "500", color: "var(--text-secondary)" }
+        });
+        presetRow.appendChild(presetLabel);
+
+        // Preset dropdown
+        const presetSelect = ztoolkit.UI.createElement(doc, "select", {
+            properties: { id: "preset-select" },
+            styles: {
+                flex: "1",
+                padding: "4px 8px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                fontSize: "11px",
+                backgroundColor: "var(--background-primary)",
+                color: "var(--text-primary)"
+            },
+            listeners: [{
+                type: "change",
+                listener: () => {
+                    const selectedName = (presetSelect as HTMLSelectElement).value;
+                    if (!selectedName) return;
+
+                    const presets = getFilterPresets();
+                    const preset = presets.find(p => p.name === selectedName);
+                    if (preset) {
+                        // Apply preset filters
+                        Object.assign(currentSearchState, preset.filters);
+                        // Re-render filters to show updated values
+                        const parent = container.parentElement;
+                        if (parent) {
+                            // Get references before removing
+                            const searchInputContainer = parent.querySelector("div[style*='position: relative']");
+                            const resultsArea = parent.querySelector("#semantic-scholar-results");
+
+                            container.remove();
+                            const newFilters = Assistant.createSearchFilters(doc);
+
+                            // Insert in correct order: filters, search input, results
+                            if (resultsArea) {
+                                parent.insertBefore(newFilters, resultsArea);
+                                if (searchInputContainer) {
+                                    parent.insertBefore(searchInputContainer, resultsArea);
+                                }
+                            }
+
+                            // Select the preset in new dropdown
+                            const newSelect = newFilters.querySelector("#preset-select") as HTMLSelectElement;
+                            if (newSelect) newSelect.value = selectedName;
+                        }
+                    }
+                }
+            }]
+        }) as HTMLSelectElement;
+
+        // Populate dropdown
+        const defaultOpt = ztoolkit.UI.createElement(doc, "option", {
+            attributes: { value: "" },
+            properties: { innerText: "-- Select preset --" }
+        });
+        presetSelect.appendChild(defaultOpt);
+
+        getFilterPresets().forEach(preset => {
+            const opt = ztoolkit.UI.createElement(doc, "option", {
+                attributes: { value: preset.name },
+                properties: { innerText: preset.name }
+            });
+            presetSelect.appendChild(opt);
+        });
+
+        presetRow.appendChild(presetSelect);
+
+        // Save button
+        const saveBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "💾 Save" },
+            styles: {
+                padding: "4px 10px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                fontSize: "11px",
+                backgroundColor: "#e3f2fd",
+                color: "#1976d2",
+                cursor: "pointer",
+                fontWeight: "500"
+            },
+            listeners: [{
+                type: "click",
+                listener: () => {
+                    const name = getNextPresetName();
+                    addFilterPreset(name, currentSearchState);
+
+                    // Add new option to dropdown
+                    const newOpt = ztoolkit.UI.createElement(doc, "option", {
+                        attributes: { value: name },
+                        properties: { innerText: name }
+                    });
+                    presetSelect.appendChild(newOpt);
+                    presetSelect.value = name;
+
+                    Zotero.debug(`[Seer AI] Saved filter preset: ${name}`);
+                }
+            }]
+        });
+        presetRow.appendChild(saveBtn);
+
+        // Rename button
+        const renameBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "✏️" },
+            attributes: { title: "Rename preset" },
+            styles: {
+                padding: "4px 8px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                fontSize: "11px",
+                backgroundColor: "#fff3e0",
+                color: "#e65100",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: () => {
+                    const selectedName = presetSelect.value;
+                    if (!selectedName) return;
+
+                    const newName = (doc.defaultView as Window).prompt("Enter new preset name:", selectedName);
+                    if (!newName || newName === selectedName) return;
+
+                    // Rename in storage
+                    const presets = getFilterPresets();
+                    const preset = presets.find(p => p.name === selectedName);
+                    if (preset) {
+                        preset.name = newName;
+                        saveFilterPresets(presets);
+                    }
+
+                    // Update dropdown option
+                    const opt = presetSelect.querySelector(`option[value="${selectedName}"]`) as HTMLOptionElement;
+                    if (opt) {
+                        opt.value = newName;
+                        opt.textContent = newName;
+                    }
+                    presetSelect.value = newName;
+
+                    Zotero.debug(`[Seer AI] Renamed preset: ${selectedName} -> ${newName}`);
+                }
+            }]
+        });
+        presetRow.appendChild(renameBtn);
+
+        // Delete button
+        const deleteBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "🗑️" },
+            attributes: { title: "Delete preset" },
+            styles: {
+                padding: "4px 8px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "4px",
+                fontSize: "11px",
+                backgroundColor: "#ffebee",
+                color: "#c62828",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: () => {
+                    const selectedName = presetSelect.value;
+                    if (!selectedName) return;
+
+                    deleteFilterPreset(selectedName);
+
+                    // Remove option from dropdown
+                    const opt = presetSelect.querySelector(`option[value="${selectedName}"]`);
+                    if (opt) opt.remove();
+                    presetSelect.value = "";
+
+                    Zotero.debug(`[Seer AI] Deleted filter preset: ${selectedName}`);
+                }
+            }]
+        });
+        presetRow.appendChild(deleteBtn);
+
+        filtersBody.appendChild(presetRow);
+
+        const gridStyle = {
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr",
+            gap: "6px",
+            marginBottom: "6px"
+        };
+
+        const labelStyle = {
+            fontSize: "10px",
+            fontWeight: "500",
+            color: "var(--text-secondary)",
+            marginBottom: "2px",
+            display: "block"
+        };
+
+        const inputStyle = {
+            width: "100%",
+            padding: "6px 10px",
+            border: "1px solid var(--border-primary)",
+            borderRadius: "4px",
+            fontSize: "12px",
+            backgroundColor: "var(--background-primary)",
+            color: "var(--text-primary)",
+            boxSizing: "border-box" as const
+        };
+
+        // Row 1: Results limit + Year range
+        const row1 = ztoolkit.UI.createElement(doc, "div", { styles: gridStyle });
+
+        // Results per page (slider)
+        const limitGroup = ztoolkit.UI.createElement(doc, "div", {});
+        const limitLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: `Results per page: ${currentSearchState.limit}` },
+            styles: labelStyle
+        });
+        const limitSlider = ztoolkit.UI.createElement(doc, "input", {
+            attributes: { type: "range", min: "10", max: "100", step: "10", value: String(currentSearchState.limit) },
+            styles: { ...inputStyle, padding: "0", cursor: "pointer" },
+            listeners: [{
+                type: "input",
+                listener: (e: Event) => {
+                    const target = e.target as HTMLInputElement;
+                    currentSearchState.limit = parseInt(target.value, 10);
+                    limitLabel.innerText = `Results per page: ${currentSearchState.limit}`;
+                }
+            }]
+        }) as HTMLInputElement;
+        limitGroup.appendChild(limitLabel);
+        limitGroup.appendChild(limitSlider);
+        row1.appendChild(limitGroup);
+
+        // Year range
+        const yearGroup = ztoolkit.UI.createElement(doc, "div", {});
+        const yearLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "Year range" },
+            styles: labelStyle
+        });
+        const yearInputs = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", gap: "4px", alignItems: "center" }
+        });
+        const yearStart = ztoolkit.UI.createElement(doc, "input", {
+            attributes: { type: "number", placeholder: "From", min: "1900", max: "2030", value: currentSearchState.yearStart || "" },
+            styles: { ...inputStyle, width: "70px" },
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    currentSearchState.yearStart = (e.target as HTMLInputElement).value;
+                }
+            }]
+        }) as HTMLInputElement;
+        const yearDash = ztoolkit.UI.createElement(doc, "span", { properties: { innerText: "-" }, styles: { color: "var(--text-secondary)" } });
+        const yearEnd = ztoolkit.UI.createElement(doc, "input", {
+            attributes: { type: "number", placeholder: "To", min: "1900", max: "2030", value: currentSearchState.yearEnd || "" },
+            styles: { ...inputStyle, width: "70px" },
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    currentSearchState.yearEnd = (e.target as HTMLInputElement).value;
+                }
+            }]
+        }) as HTMLInputElement;
+        yearInputs.appendChild(yearStart);
+        yearInputs.appendChild(yearDash);
+        yearInputs.appendChild(yearEnd);
+        yearGroup.appendChild(yearLabel);
+        yearGroup.appendChild(yearInputs);
+        row1.appendChild(yearGroup);
+
+        filtersBody.appendChild(row1);
+
+        // Row 2: Checkboxes (Has PDF, Hide Library Duplicates)
+        const row2 = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", gap: "16px", marginBottom: "12px" }
+        });
+
+        const hasPdfCheck = this.createFilterCheckbox(doc, "📄 Has PDF", currentSearchState.openAccessPdf, (val) => {
+            currentSearchState.openAccessPdf = val;
+        });
+        row2.appendChild(hasPdfCheck);
+
+        const hideDupsCheck = this.createFilterCheckbox(doc, "🚫 Hide Library Duplicates", currentSearchState.hideLibraryDuplicates, (val) => {
+            currentSearchState.hideLibraryDuplicates = val;
+        });
+        row2.appendChild(hideDupsCheck);
+
+        filtersBody.appendChild(row2);
+
+        // Row 3: Min Citations + Sort By
+        const row3 = ztoolkit.UI.createElement(doc, "div", { styles: gridStyle });
+
+        const minCitGroup = ztoolkit.UI.createElement(doc, "div", {});
+        const minCitLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "Min citations" },
+            styles: labelStyle
+        });
+        const minCitInput = ztoolkit.UI.createElement(doc, "input", {
+            attributes: { type: "number", placeholder: "0", min: "0", value: String(currentSearchState.minCitationCount || "") },
+            styles: inputStyle,
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    const val = parseInt((e.target as HTMLInputElement).value, 10);
+                    currentSearchState.minCitationCount = isNaN(val) ? undefined : val;
+                }
+            }]
+        }) as HTMLInputElement;
+        minCitGroup.appendChild(minCitLabel);
+        minCitGroup.appendChild(minCitInput);
+        row3.appendChild(minCitGroup);
+
+        const sortGroup = ztoolkit.UI.createElement(doc, "div", {});
+        const sortLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "Sort by" },
+            styles: labelStyle
+        });
+        const sortSelect = ztoolkit.UI.createElement(doc, "select", {
+            styles: { ...inputStyle, appearance: "auto" as const },
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    currentSearchState.sortBy = (e.target as HTMLSelectElement).value as SearchState["sortBy"];
+                }
+            }]
+        }) as HTMLSelectElement;
+
+        const sortOptions = [
+            { value: "relevance", label: "Relevance" },
+            { value: "citationCount:desc", label: "Most Cited" },
+            { value: "publicationDate:desc", label: "Newest First" }
+        ];
+        sortOptions.forEach(opt => {
+            const option = ztoolkit.UI.createElement(doc, "option", {
+                attributes: { value: opt.value },
+                properties: { innerText: opt.label }
+            }) as HTMLOptionElement;
+            if (opt.value === currentSearchState.sortBy) option.selected = true;
+            sortSelect.appendChild(option);
+        });
+        sortGroup.appendChild(sortLabel);
+        sortGroup.appendChild(sortSelect);
+        row3.appendChild(sortGroup);
+
+        filtersBody.appendChild(row3);
+
+        // Row 4: Fields of Study multi-select
+        const fosGroup = ztoolkit.UI.createElement(doc, "div", { styles: { marginBottom: "12px" } });
+        const fosLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "Fields of Study" },
+            styles: labelStyle
+        });
+        const fosContainer = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", flexWrap: "wrap", gap: "4px" }
+        });
+
+        const commonFields = ["Computer Science", "Medicine", "Biology", "Physics", "Psychology", "Engineering"];
+        commonFields.forEach(field => {
+            const isSelected = currentSearchState.fieldsOfStudy.includes(field);
+            const chip = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: field, className: `fos-chip ${isSelected ? "selected" : ""}` },
+                styles: {
+                    padding: "4px 10px",
+                    borderRadius: "14px",
+                    fontSize: "10px",
+                    cursor: "pointer",
+                    backgroundColor: isSelected ? "#1976d2" : "transparent",
+                    color: isSelected ? "#ffffff" : "var(--text-primary)",
+                    border: isSelected ? "2px solid #1976d2" : "2px solid #888888",
+                    fontWeight: isSelected ? "600" : "400",
+                    transition: "all 0.15s ease"
+                },
+                listeners: [{
+                    type: "click",
+                    listener: () => {
+                        const idx = currentSearchState.fieldsOfStudy.indexOf(field);
+                        if (idx >= 0) {
+                            currentSearchState.fieldsOfStudy.splice(idx, 1);
+                            chip.style.backgroundColor = "transparent";
+                            chip.style.color = "var(--text-primary)";
+                            chip.style.border = "2px solid #888888";
+                            chip.style.fontWeight = "400";
+                        } else {
+                            currentSearchState.fieldsOfStudy.push(field);
+                            chip.style.backgroundColor = "#1976d2";
+                            chip.style.color = "#ffffff";
+                            chip.style.border = "2px solid #1976d2";
+                            chip.style.fontWeight = "600";
+                        }
+                    }
+                }]
+            });
+            fosContainer.appendChild(chip);
+        });
+
+        fosGroup.appendChild(fosLabel);
+        fosGroup.appendChild(fosContainer);
+        filtersBody.appendChild(fosGroup);
+
+        // Row 5: Publication Types
+        const pubTypeGroup = ztoolkit.UI.createElement(doc, "div", { styles: { marginBottom: "12px" } });
+        const pubTypeLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "Publication Types" },
+            styles: labelStyle
+        });
+        const pubTypeContainer = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", flexWrap: "wrap", gap: "4px" }
+        });
+
+        const pubTypes = [
+            "JournalArticle", "Conference", "Review", "Book",
+            "Dataset", "ClinicalTrial", "MetaAnalysis", "Study"
+        ];
+        pubTypes.forEach(ptype => {
+            const isSelected = currentSearchState.publicationTypes.includes(ptype);
+            const chip = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: ptype.replace(/([A-Z])/g, ' $1').trim() },
+                styles: {
+                    padding: "4px 10px",
+                    borderRadius: "14px",
+                    fontSize: "10px",
+                    cursor: "pointer",
+                    backgroundColor: isSelected ? "#1976d2" : "transparent",
+                    color: isSelected ? "#ffffff" : "var(--text-primary)",
+                    border: isSelected ? "2px solid #1976d2" : "2px solid #888888",
+                    fontWeight: isSelected ? "600" : "400",
+                    transition: "all 0.15s ease"
+                },
+                listeners: [{
+                    type: "click",
+                    listener: () => {
+                        const idx = currentSearchState.publicationTypes.indexOf(ptype);
+                        if (idx >= 0) {
+                            currentSearchState.publicationTypes.splice(idx, 1);
+                            chip.style.backgroundColor = "transparent";
+                            chip.style.color = "var(--text-primary)";
+                            chip.style.border = "2px solid #888888";
+                            chip.style.fontWeight = "400";
+                        } else {
+                            currentSearchState.publicationTypes.push(ptype);
+                            chip.style.backgroundColor = "#1976d2";
+                            chip.style.color = "#ffffff";
+                            chip.style.border = "2px solid #1976d2";
+                            chip.style.fontWeight = "600";
+                        }
+                    }
+                }]
+            });
+            pubTypeContainer.appendChild(chip);
+        });
+
+        pubTypeGroup.appendChild(pubTypeLabel);
+        pubTypeGroup.appendChild(pubTypeContainer);
+        filtersBody.appendChild(pubTypeGroup);
+
+        // Row 6: Venue filter
+        const venueGroup = ztoolkit.UI.createElement(doc, "div", { styles: { marginBottom: "8px" } });
+        const venueLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "Venue (e.g., Nature, Cell, ICML)" },
+            styles: labelStyle
+        });
+        const venueInput = ztoolkit.UI.createElement(doc, "input", {
+            attributes: {
+                type: "text",
+                placeholder: "Comma-separated venues...",
+                value: currentSearchState.venue || ""
+            },
+            styles: { ...inputStyle, width: "100%" },
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    currentSearchState.venue = (e.target as HTMLInputElement).value || undefined;
+                }
+            }]
+        }) as HTMLInputElement;
+        venueGroup.appendChild(venueLabel);
+        venueGroup.appendChild(venueInput);
+        filtersBody.appendChild(venueGroup);
+
+        container.appendChild(filtersBody);
+        return container;
+    }
+
+    /**
+     * Helper to create a filter checkbox
+     */
+    private static createFilterCheckbox(doc: Document, label: string, checked: boolean, onChange: (val: boolean) => void): HTMLElement {
+        const container = ztoolkit.UI.createElement(doc, "label", {
+            styles: {
+                display: "flex",
+                alignItems: "center",
+                gap: "6px",
+                fontSize: "12px",
+                color: "var(--text-primary)",
+                cursor: "pointer"
+            }
+        });
+
+        const checkbox = ztoolkit.UI.createElement(doc, "input", {
+            attributes: { type: "checkbox" },
+            styles: { cursor: "pointer" },
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    onChange((e.target as HTMLInputElement).checked);
+                }
+            }]
+        }) as HTMLInputElement;
+        checkbox.checked = checked;
+
+        const labelText = ztoolkit.UI.createElement(doc, "span", {
+            properties: { innerText: label }
+        });
+
+        container.appendChild(checkbox);
+        container.appendChild(labelText);
+        return container;
+    }
+
+    /**
+     * Perform the search and update results
+     */
+    private static async performSearch(doc: Document): Promise<void> {
+        if (isSearching || !currentSearchState.query.trim()) return;
+
+        isSearching = true;
+        const resultsArea = doc.getElementById("semantic-scholar-results");
+        if (!resultsArea) {
+            isSearching = false;
+            return;
+        }
+
+        // Determine if this is a pagination request (Show More) or a fresh search
+        const isPagination = currentSearchResults.length > 0;
+
+        if (isPagination) {
+            // For pagination: show loading indicator BELOW existing content
+            // The loading indicator is already placed by the click handler, 
+            // so we don't need to do anything else here
+        } else {
+            // For fresh searches: clear and show loading
+            resultsArea.innerHTML = "";
+            const loadingEl = ztoolkit.UI.createElement(doc, "div", {
+                properties: { id: "initial-search-loading" },
+                styles: {
+                    padding: "40px",
+                    textAlign: "center",
+                    color: "var(--text-secondary)"
+                }
+            });
+            loadingEl.innerHTML = `<div style="font-size: 24px; margin-bottom: 8px;">⏳</div><div>Searching Semantic Scholar...</div>`;
+            resultsArea.appendChild(loadingEl);
+        }
+
+        try {
+            // Check for API key
+            if (!semanticScholarService.hasApiKey()) {
+                throw new Error("Please configure your Semantic Scholar API key in Settings.");
+            }
+
+            // Build year filter
+            let yearParam: string | undefined;
+            if (currentSearchState.yearStart || currentSearchState.yearEnd) {
+                const start = currentSearchState.yearStart || "";
+                const end = currentSearchState.yearEnd || "";
+                yearParam = `${start}-${end}`;
+            }
+
+            const result = await semanticScholarService.searchPapers({
+                query: currentSearchState.query,
+                limit: currentSearchState.limit,
+                offset: currentSearchResults.length,
+                year: yearParam,
+                openAccessPdf: currentSearchState.openAccessPdf || undefined,
+                fieldsOfStudy: currentSearchState.fieldsOfStudy.length > 0 ? currentSearchState.fieldsOfStudy : undefined,
+                publicationTypes: currentSearchState.publicationTypes.length > 0 ? currentSearchState.publicationTypes : undefined,
+                minCitationCount: currentSearchState.minCitationCount,
+                venue: currentSearchState.venue,
+            });
+
+            // Capture total count from result
+            if (currentSearchResults.length === 0) {
+                totalSearchResults = result.total;
+            }
+
+            // Filter library duplicates if enabled
+            let papers = result.data;
+            if (currentSearchState.hideLibraryDuplicates) {
+                papers = await this.filterLibraryDuplicates(papers);
+            }
+
+            const previousCount = currentSearchResults.length;
+            currentSearchResults = [...currentSearchResults, ...papers];
+
+            // If this is a fresh search (previousCount === 0), render everything
+            // Otherwise, just append the new cards
+            if (previousCount === 0) {
+                this.renderSearchResults(doc, resultsArea as HTMLElement, currentItem!);
+            } else {
+                // Append new cards without clearing existing content
+                this.appendSearchCards(doc, resultsArea as HTMLElement, papers, currentItem!);
+            }
+
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : "Search failed";
+            Zotero.debug(`[Seer AI] Search error: ${error}`);
+
+            if (isPagination) {
+                // For pagination errors: only remove loading indicator and show inline error
+                const loadingIndicator = resultsArea.querySelector("#show-more-loading");
+                if (loadingIndicator) {
+                    loadingIndicator.remove();
+                }
+                // Re-add the Show More button so user can retry
+                const existingShowMore = resultsArea.querySelector("#show-more-btn");
+                if (existingShowMore) {
+                    existingShowMore.remove();
+                }
+                const errorMsg = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "12px",
+                        textAlign: "center",
+                        color: "var(--error-color, #d32f2f)",
+                        fontSize: "12px"
+                    }
+                });
+                errorMsg.innerHTML = `⚠️ ${errorMessage}. <button id="retry-show-more" style="margin-left: 8px; cursor: pointer; padding: 4px 8px; border: 1px solid var(--border-primary); border-radius: 4px; background: var(--background-secondary);">Retry</button>`;
+                resultsArea.appendChild(errorMsg);
+                // Add retry handler
+                const retryBtn = errorMsg.querySelector("#retry-show-more");
+                if (retryBtn) {
+                    retryBtn.addEventListener("click", async () => {
+                        errorMsg.remove();
+                        await this.performSearch(doc);
+                    });
+                }
+            } else {
+                // For fresh search errors: show full error
+                resultsArea.innerHTML = "";
+                const errorEl = ztoolkit.UI.createElement(doc, "div", {
+                    styles: {
+                        padding: "40px",
+                        textAlign: "center",
+                        color: "var(--error-color, #d32f2f)"
+                    }
+                });
+                errorEl.innerHTML = `<div style="font-size: 24px; margin-bottom: 8px;">⚠️</div><div>${errorMessage}</div>`;
+                resultsArea.appendChild(errorEl);
+            }
+        } finally {
+            isSearching = false;
+        }
+    }
+
+    /**
+     * Filter out papers that already exist in the Zotero library
+     */
+    private static async filterLibraryDuplicates(papers: SemanticScholarPaper[]): Promise<SemanticScholarPaper[]> {
+        const libraryItems = await Zotero.Items.getAll(Zotero.Libraries.userLibraryID);
+
+        // Build lookup sets for DOI, PMID, and titles
+        const existingDOIs = new Set<string>();
+        const existingPMIDs = new Set<string>();
+        const existingTitles = new Set<string>();
+
+        for (const item of libraryItems) {
+            if (!item.isRegularItem()) continue;
+
+            const doi = item.getField("DOI") as string;
+            if (doi) existingDOIs.add(doi.toLowerCase());
+
+            const extra = item.getField("extra") as string;
+            if (extra) {
+                const pmidMatch = extra.match(/PMID:\s*(\d+)/i);
+                if (pmidMatch) existingPMIDs.add(pmidMatch[1]);
+            }
+
+            const title = item.getField("title") as string;
+            if (title) existingTitles.add(title.toLowerCase().trim());
+        }
+
+        return papers.filter(paper => {
+            // Check DOI
+            if (paper.externalIds?.DOI && existingDOIs.has(paper.externalIds.DOI.toLowerCase())) {
+                return false;
+            }
+            // Check PMID
+            if (paper.externalIds?.PMID && existingPMIDs.has(paper.externalIds.PMID)) {
+                return false;
+            }
+            // Check title (exact match, case insensitive)
+            if (paper.title && existingTitles.has(paper.title.toLowerCase().trim())) {
+                return false;
+            }
+            return true;
+        });
+    }
+
+    /**
+     * Render search results in the results area
+     */
+    private static renderSearchResults(doc: Document, container: HTMLElement, item: Zotero.Item): void {
+        container.innerHTML = "";
+
+        if (currentSearchResults.length === 0 && !currentSearchState.query) {
+            // Initial empty state
+            const emptyState = ztoolkit.UI.createElement(doc, "div", {
+                styles: {
+                    padding: "60px 20px",
+                    textAlign: "center",
+                    color: "var(--text-secondary)"
+                }
+            });
+            emptyState.innerHTML = `
+                <div style="font-size: 48px; margin-bottom: 16px;">🔍</div>
+                <div style="font-size: 14px; font-weight: 500; margin-bottom: 8px;">Search Semantic Scholar</div>
+                <div style="font-size: 12px;">Enter a query to find relevant papers</div>
+            `;
+            container.appendChild(emptyState);
+            return;
+        }
+
+        if (currentSearchResults.length === 0 && currentSearchState.query) {
+            // No results
+            const noResults = ztoolkit.UI.createElement(doc, "div", {
+                styles: {
+                    padding: "40px",
+                    textAlign: "center",
+                    color: "var(--text-secondary)"
+                }
+            });
+            noResults.innerHTML = `
+                <div style="font-size: 32px; margin-bottom: 8px;">📭</div>
+                <div>No papers found for "${currentSearchState.query}"</div>
+            `;
+            container.appendChild(noResults);
+            return;
+        }
+
+        // Total count header
+        const countHeader = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                padding: "8px 12px",
+                backgroundColor: "var(--background-secondary)",
+                borderBottom: "1px solid var(--border-primary)",
+                fontSize: "12px",
+                color: "var(--text-secondary)",
+                fontWeight: "500"
+            }
+        });
+        countHeader.innerHTML = `📊 Found <strong>${totalSearchResults.toLocaleString()}</strong> papers • Showing ${currentSearchResults.length}`;
+        container.appendChild(countHeader);
+
+        // Render result cards
+        currentSearchResults.forEach(paper => {
+            const card = this.createSearchResultCard(doc, paper, item);
+            container.appendChild(card);
+        });
+
+        // "Show More" button
+        const showMoreBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "📥 Show More", id: "show-more-btn" },
+            styles: {
+                display: "block",
+                width: "calc(100% - 24px)",
+                margin: "12px",
+                padding: "12px",
+                backgroundColor: "var(--background-secondary)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                fontSize: "13px",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: async () => {
+                    // Replace button with loading indicator
+                    const loadingDiv = ztoolkit.UI.createElement(doc, "div", {
+                        properties: { id: "show-more-loading" },
+                        styles: {
+                            textAlign: "center",
+                            padding: "16px",
+                            color: "var(--text-secondary)",
+                            fontSize: "12px"
+                        }
+                    });
+                    loadingDiv.innerHTML = "⏳ Loading more papers...";
+                    showMoreBtn.replaceWith(loadingDiv);
+
+                    await this.performSearch(doc);
+                }
+            }]
+        });
+        container.appendChild(showMoreBtn);
+    }
+
+    /**
+     * Append new search result cards without clearing existing content
+     */
+    private static appendSearchCards(doc: Document, container: HTMLElement, newPapers: SemanticScholarPaper[], item: Zotero.Item): void {
+        // Find and remove the loading indicator if present
+        const loadingIndicator = container.querySelector("#show-more-loading");
+        if (loadingIndicator) {
+            loadingIndicator.remove();
+        }
+
+        // Find and remove the existing Show More button (we'll add a new one at the end)
+        const existingShowMore = container.querySelector("#show-more-btn");
+        if (existingShowMore) {
+            existingShowMore.remove();
+        }
+
+        // Update the count header
+        const countHeader = container.querySelector("div:first-child");
+        if (countHeader && (countHeader.textContent || "").includes("Found")) {
+            countHeader.innerHTML = `📊 Found <strong>${totalSearchResults.toLocaleString()}</strong> papers • Showing ${currentSearchResults.length}`;
+        }
+
+        // Append new paper cards
+        newPapers.forEach(paper => {
+            const card = this.createSearchResultCard(doc, paper, item);
+            container.appendChild(card);
+        });
+
+        // Add Show More button at the end
+        const showMoreBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "📥 Show More", id: "show-more-btn" },
+            styles: {
+                display: "block",
+                width: "calc(100% - 24px)",
+                margin: "12px",
+                padding: "12px",
+                backgroundColor: "var(--background-secondary)",
+                color: "var(--text-primary)",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                fontSize: "13px",
+                cursor: "pointer"
+            },
+            listeners: [{
+                type: "click",
+                listener: async () => {
+                    showMoreBtn.textContent = "Loading...";
+                    showMoreBtn.setAttribute("disabled", "true");
+                    await this.performSearch(doc);
+                }
+            }]
+        });
+        container.appendChild(showMoreBtn);
+    }
+
+    /**
+     * Create a paper result card
+     */
+    private static createSearchResultCard(doc: Document, paper: SemanticScholarPaper, item: Zotero.Item): HTMLElement {
+        const card = ztoolkit.UI.createElement(doc, "div", {
+            properties: { className: "search-result-card" },
+            styles: {
+                padding: "12px",
+                borderBottom: "1px solid var(--border-primary)",
+                cursor: "pointer"
+            }
+        });
+
+        // Header: Title + PDF indicator
+        const header = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "6px" }
+        });
+
+        const title = ztoolkit.UI.createElement(doc, "div", {
+            properties: { innerText: paper.title },
+            styles: {
+                fontSize: "13px",
+                fontWeight: "600",
+                color: "var(--text-primary)",
+                flex: "1",
+                lineHeight: "1.3"
+            }
+        });
+        header.appendChild(title);
+
+        if (paper.openAccessPdf) {
+            const pdfBadge = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: "📄 PDF" },
+                styles: {
+                    fontSize: "10px",
+                    padding: "2px 6px",
+                    backgroundColor: "#e8f5e9",
+                    color: "#2e7d32",
+                    borderRadius: "4px",
+                    marginLeft: "8px",
+                    whiteSpace: "nowrap"
+                }
+            });
+            header.appendChild(pdfBadge);
+        }
+
+        card.appendChild(header);
+
+        // Meta: Authors (clickable), Year, Venue
+        const meta = ztoolkit.UI.createElement(doc, "div", {
+            styles: { fontSize: "11px", color: "var(--text-secondary)", marginBottom: "6px", display: "flex", flexWrap: "wrap", alignItems: "center", gap: "2px" }
+        });
+
+        // Clickable author links
+        const displayedAuthors = paper.authors?.slice(0, 3) || [];
+        displayedAuthors.forEach((author, idx) => {
+            const authorLink = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: author.name },
+                styles: {
+                    color: "var(--highlight-primary)",
+                    cursor: "pointer",
+                    textDecoration: "underline"
+                },
+                listeners: [{
+                    type: "click",
+                    listener: async (e: Event) => {
+                        e.stopPropagation();
+                        await this.showAuthorModal(doc, author.authorId, author.name);
+                    }
+                }]
+            });
+            meta.appendChild(authorLink);
+            if (idx < displayedAuthors.length - 1) {
+                const comma = ztoolkit.UI.createElement(doc, "span", { properties: { innerText: ", " } });
+                meta.appendChild(comma);
+            }
+        });
+
+        if (paper.authors?.length > 3) {
+            const more = ztoolkit.UI.createElement(doc, "span", {
+                properties: { innerText: ` +${paper.authors.length - 3} more` }
+            });
+            meta.appendChild(more);
+        }
+
+        const yearVenue = paper.year ? ` • ${paper.year}` : "";
+        const venueText = paper.venue ? ` • ${paper.venue.slice(0, 30)}${paper.venue.length > 30 ? "..." : ""}` : "";
+        const extraMeta = ztoolkit.UI.createElement(doc, "span", {
+            properties: { innerText: yearVenue + venueText }
+        });
+        meta.appendChild(extraMeta);
+        card.appendChild(meta);
+
+        // Citation count
+        const citationBadge = ztoolkit.UI.createElement(doc, "div", {
+            styles: { fontSize: "11px", color: "var(--text-secondary)", marginBottom: "6px" }
+        });
+        citationBadge.innerHTML = `📈 <strong>${paper.citationCount.toLocaleString()}</strong> citations`;
+        card.appendChild(citationBadge);
+
+        // Abstract preview (TLDR or truncated abstract)
+        const abstractText = paper.tldr?.text || paper.abstract;
+        if (abstractText) {
+            const abstractEl = ztoolkit.UI.createElement(doc, "div", {
+                properties: { innerText: abstractText.slice(0, 200) + (abstractText.length > 200 ? "..." : "") },
+                styles: {
+                    fontSize: "11px",
+                    color: "var(--text-secondary)",
+                    lineHeight: "1.4",
+                    marginBottom: "8px"
+                }
+            });
+            card.appendChild(abstractEl);
+        }
+
+        // Action buttons
+        const actions = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", gap: "8px", marginTop: "8px" }
+        });
+
+        const actionBtnStyle = {
+            padding: "6px 10px",
+            fontSize: "11px",
+            border: "1px solid var(--border-primary)",
+            borderRadius: "4px",
+            backgroundColor: "var(--background-secondary)",
+            color: "var(--text-primary)",
+            cursor: "pointer"
+        };
+
+        // Add to Zotero button
+        const addToZoteroBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "➕ Add to Zotero" },
+            styles: { ...actionBtnStyle, backgroundColor: "var(--highlight-primary)", color: "var(--highlight-text)", border: "none" },
+            listeners: [{
+                type: "click",
+                listener: async (e: Event) => {
+                    e.stopPropagation();
+                    await this.addPaperToZotero(paper);
+                    (e.target as HTMLButtonElement).textContent = "✓ Added";
+                    (e.target as HTMLButtonElement).disabled = true;
+                }
+            }]
+        });
+        actions.appendChild(addToZoteroBtn);
+
+        // Add to Table button
+        const addToTableBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "📊 Add to Table" },
+            styles: actionBtnStyle,
+            listeners: [{
+                type: "click",
+                listener: async (e: Event) => {
+                    e.stopPropagation();
+                    const zoteroItem = await this.addPaperToZotero(paper);
+                    if (zoteroItem && currentTableConfig) {
+                        if (!currentTableConfig.addedPaperIds.includes(zoteroItem.id)) {
+                            currentTableConfig.addedPaperIds.push(zoteroItem.id);
+                            const tableStore = getTableStore();
+                            await tableStore.saveConfig(currentTableConfig);
+                        }
+                    }
+                    (e.target as HTMLButtonElement).textContent = "✓ Added";
+                    (e.target as HTMLButtonElement).disabled = true;
+                }
+            }]
+        });
+        actions.appendChild(addToTableBtn);
+
+        // Open in browser button
+        const openBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "🔗 Open" },
+            styles: actionBtnStyle,
+            listeners: [{
+                type: "click",
+                listener: (e: Event) => {
+                    e.stopPropagation();
+                    Zotero.launchURL(paper.url);
+                }
+            }]
+        });
+        actions.appendChild(openBtn);
+
+        // PDF Download button (only if open access PDF available)
+        if (paper.openAccessPdf?.url) {
+            const pdfBtn = ztoolkit.UI.createElement(doc, "button", {
+                properties: { innerText: "📥 PDF" },
+                styles: { ...actionBtnStyle, backgroundColor: "#e8f5e9", color: "#2e7d32", border: "1px solid #a5d6a7" },
+                listeners: [{
+                    type: "click",
+                    listener: (e: Event) => {
+                        e.stopPropagation();
+                        Zotero.launchURL(paper.openAccessPdf!.url);
+                    }
+                }]
+            });
+            actions.appendChild(pdfBtn);
+        }
+
+        // Find Similar button (recommendations)
+        const similarBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "🔮 Similar" },
+            styles: actionBtnStyle,
+            listeners: [{
+                type: "click",
+                listener: async (e: Event) => {
+                    e.stopPropagation();
+                    const btn = e.target as HTMLButtonElement;
+                    btn.textContent = "Loading...";
+                    btn.disabled = true;
+                    try {
+                        // Get recommendations based on this paper
+                        const recommendations = await semanticScholarService.getRecommendations([paper.paperId]);
+                        if (recommendations.length > 0) {
+                            // Replace current results with recommendations
+                            currentSearchResults = recommendations;
+                            totalSearchResults = recommendations.length;
+                            currentSearchState.query = `Similar to: ${paper.title.slice(0, 50)}...`;
+                            const resultsArea = doc.getElementById("semantic-scholar-results");
+                            if (resultsArea) {
+                                this.renderSearchResults(doc, resultsArea as HTMLElement, currentItem!);
+                            }
+                        } else {
+                            btn.textContent = "No similar";
+                        }
+                    } catch (error) {
+                        Zotero.debug(`[Seer AI] Recommendations error: ${error}`);
+                        btn.textContent = "Error";
+                    }
+                }
+            }]
+        });
+        actions.appendChild(similarBtn);
+
+        card.appendChild(actions);
+
+        // Hover effect
+        card.addEventListener("mouseenter", () => {
+            card.style.backgroundColor = "var(--background-secondary)";
+        });
+        card.addEventListener("mouseleave", () => {
+            card.style.backgroundColor = "transparent";
+        });
+
+        return card;
+    }
+
+    /**
+     * Show author details modal
+     */
+    private static async showAuthorModal(doc: Document, authorId: string, authorName: string): Promise<void> {
+        // Create modal overlay
+        const overlay = ztoolkit.UI.createElement(doc, "div", {
+            properties: { id: "author-modal-overlay" },
+            styles: {
+                position: "fixed",
+                top: "0",
+                left: "0",
+                right: "0",
+                bottom: "0",
+                backgroundColor: "rgba(0,0,0,0.5)",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                zIndex: "9999"
+            },
+            listeners: [{
+                type: "click",
+                listener: (e: Event) => {
+                    if (e.target === overlay) overlay.remove();
+                }
+            }]
+        });
+
+        // Modal content
+        const modal = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                backgroundColor: "var(--background-primary)",
+                borderRadius: "8px",
+                padding: "16px",
+                minWidth: "300px",
+                maxWidth: "400px",
+                maxHeight: "70vh",
+                overflowY: "auto",
+                boxShadow: "0 8px 32px rgba(0,0,0,0.3)"
+            }
+        });
+
+        // Header
+        const header = ztoolkit.UI.createElement(doc, "div", {
+            styles: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }
+        });
+        const title = ztoolkit.UI.createElement(doc, "h3", {
+            properties: { innerText: `👤 ${authorName}` },
+            styles: { margin: "0", fontSize: "14px", fontWeight: "600" }
+        });
+        const closeBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "✕" },
+            styles: { border: "none", background: "transparent", fontSize: "16px", cursor: "pointer" },
+            listeners: [{ type: "click", listener: () => overlay.remove() }]
+        });
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        modal.appendChild(header);
+
+        // Loading state
+        const loadingEl = ztoolkit.UI.createElement(doc, "div", {
+            properties: { innerText: "Loading author details..." },
+            styles: { color: "var(--text-secondary)", fontSize: "12px" }
+        });
+        modal.appendChild(loadingEl);
+
+        overlay.appendChild(modal);
+        if (doc.body) {
+            doc.body.appendChild(overlay);
+        } else {
+            doc.documentElement?.appendChild(overlay);
+        }
+
+        try {
+            const authors = await semanticScholarService.getAuthorsBatch([authorId]);
+            if (authors.length === 0) {
+                loadingEl.textContent = "Author not found";
+                return;
+            }
+
+            const author = authors[0];
+            loadingEl.remove();
+
+            // Stats
+            const stats = ztoolkit.UI.createElement(doc, "div", {
+                styles: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginBottom: "12px" }
+            });
+
+            const statItems = [
+                { label: "h-Index", value: author.hIndex ?? "N/A" },
+                { label: "Papers", value: author.paperCount?.toLocaleString() ?? "N/A" },
+                { label: "Citations", value: author.citationCount?.toLocaleString() ?? "N/A" }
+            ];
+
+            statItems.forEach(stat => {
+                const statEl = ztoolkit.UI.createElement(doc, "div", {
+                    styles: { textAlign: "center", padding: "8px", backgroundColor: "var(--background-secondary)", borderRadius: "4px" }
+                });
+                statEl.innerHTML = `<div style="font-size: 16px; font-weight: 600;">${stat.value}</div><div style="font-size: 10px; color: var(--text-secondary);">${stat.label}</div>`;
+                stats.appendChild(statEl);
+            });
+            modal.appendChild(stats);
+
+            // Recent papers
+            if (author.papers && author.papers.length > 0) {
+                const papersLabel = ztoolkit.UI.createElement(doc, "div", {
+                    properties: { innerText: "📑 Recent Papers" },
+                    styles: { fontSize: "12px", fontWeight: "500", marginBottom: "8px" }
+                });
+                modal.appendChild(papersLabel);
+
+                author.papers.slice(0, 5).forEach(paper => {
+                    const paperEl = ztoolkit.UI.createElement(doc, "div", {
+                        properties: { innerText: `${paper.year ? `[${paper.year}] ` : ""}${paper.title}` },
+                        styles: {
+                            fontSize: "11px",
+                            padding: "6px",
+                            marginBottom: "4px",
+                            backgroundColor: "var(--background-secondary)",
+                            borderRadius: "4px",
+                            cursor: "pointer"
+                        },
+                        listeners: [{
+                            type: "click",
+                            listener: () => {
+                                Zotero.launchURL(`https://www.semanticscholar.org/paper/${paper.paperId}`);
+                            }
+                        }]
+                    });
+                    modal.appendChild(paperEl);
+                });
+            }
+
+            // Semantic Scholar link
+            if (author.url) {
+                const linkBtn = ztoolkit.UI.createElement(doc, "button", {
+                    properties: { innerText: "🔗 View on Semantic Scholar" },
+                    styles: {
+                        width: "100%",
+                        marginTop: "12px",
+                        padding: "8px",
+                        backgroundColor: "var(--highlight-primary)",
+                        color: "var(--highlight-text)",
+                        border: "none",
+                        borderRadius: "4px",
+                        fontSize: "12px",
+                        cursor: "pointer"
+                    },
+                    listeners: [{
+                        type: "click",
+                        listener: () => Zotero.launchURL(author.url!)
+                    }]
+                });
+                modal.appendChild(linkBtn);
+            }
+        } catch (error) {
+            loadingEl.textContent = `Error: ${error instanceof Error ? error.message : "Failed to load"}`;
+            Zotero.debug(`[Seer AI] Author modal error: ${error}`);
+        }
+    }
+
+    /**
+     * Add a Semantic Scholar paper to Zotero library
+     */
+    private static async addPaperToZotero(paper: SemanticScholarPaper): Promise<Zotero.Item | null> {
+        try {
+            // Try to import via DOI first (best method)
+            if (paper.externalIds?.DOI) {
+                const doi = paper.externalIds.DOI;
+                Zotero.debug(`[Seer AI] Adding paper via DOI: ${doi}`);
+
+                // Use Zotero's DOI import
+                const items = await Zotero.Translate.createFromDOI(doi).translate({
+                    libraryID: Zotero.Libraries.userLibraryID,
+                    collections: [],
+                    saveAttachments: true
+                });
+
+                if (items && items.length > 0) {
+                    return items[0] as Zotero.Item;
+                }
+            }
+
+            // Fallback: Create item manually
+            Zotero.debug(`[Seer AI] Creating item manually for: ${paper.title}`);
+
+            await Zotero.DB.executeTransaction(async function () {
+                const newItem = new Zotero.Item('journalArticle');
+                newItem.setField('title', paper.title);
+
+                if (paper.abstract) newItem.setField('abstractNote', paper.abstract);
+                if (paper.year) newItem.setField('date', String(paper.year));
+                if (paper.venue) newItem.setField('publicationTitle', paper.venue);
+                if (paper.externalIds?.DOI) newItem.setField('DOI', paper.externalIds.DOI);
+                if (paper.url) newItem.setField('url', paper.url);
+
+                // Add authors
+                const creators = paper.authors?.slice(0, 10).map(author => {
+                    const nameParts = author.name.trim().split(' ');
+                    const lastName = nameParts.pop() || author.name;
+                    const firstName = nameParts.join(' ');
+                    return {
+                        firstName,
+                        lastName,
+                        creatorType: 'author' as const
+                    };
+                }) || [];
+
+                newItem.setCreators(creators);
+                await newItem.saveTx();
+            });
+
+            // Return the created item
+            const search = new Zotero.Search({ libraryID: Zotero.Libraries.userLibraryID });
+            search.addCondition('title', 'is', paper.title);
+            const ids = await search.search();
+            if (ids.length > 0) {
+                return Zotero.Items.get(ids[0]) as Zotero.Item;
+            }
+
+            return null;
+        } catch (error) {
+            Zotero.debug(`[Seer AI] Error adding paper to Zotero: ${error}`);
+            return null;
+        }
     }
 
     /**
@@ -6104,8 +8078,11 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
                 fontSize: "13px",
                 maxWidth: "90%",
                 alignSelf: isUser ? "flex-end" : "flex-start",
-                boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
-                position: "relative"
+                boxShadow: "0 1px 3px rgba(0,0,0,0.12)",
+                position: "relative",
+                backgroundColor: isUser ? "#1976d2" : "#f5f5f5",
+                color: isUser ? "#ffffff" : "#212121",
+                border: isUser ? "none" : "1px solid #e0e0e0"
             }
         });
 
