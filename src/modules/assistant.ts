@@ -1558,6 +1558,43 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         venueGroup.appendChild(venueInput);
         filtersBody.appendChild(venueGroup);
 
+        // Row 7: Save Location dropdown
+        const saveLocationGroup = ztoolkit.UI.createElement(doc, "div", {
+            styles: {
+                marginBottom: "8px",
+                marginTop: "8px",
+                paddingTop: "8px",
+                borderTop: "1px solid var(--border-primary)"
+            }
+        });
+        const saveLocationLabel = ztoolkit.UI.createElement(doc, "label", {
+            properties: { innerText: "📥 Save imported papers to:" },
+            styles: { ...labelStyle, fontWeight: "600" }
+        });
+        const saveLocationSelect = ztoolkit.UI.createElement(doc, "select", {
+            properties: { id: "save-location-select" },
+            styles: {
+                ...inputStyle,
+                width: "100%",
+                appearance: "auto" as const,
+                marginTop: "4px"
+            },
+            listeners: [{
+                type: "change",
+                listener: (e: Event) => {
+                    currentSearchState.saveLocation = (e.target as HTMLSelectElement).value;
+                    Zotero.debug(`[Seer AI] Save location changed to: ${currentSearchState.saveLocation}`);
+                }
+            }]
+        }) as HTMLSelectElement;
+
+        // Populate save location dropdown with libraries and collections
+        this.populateSaveLocationSelect(saveLocationSelect);
+
+        saveLocationGroup.appendChild(saveLocationLabel);
+        saveLocationGroup.appendChild(saveLocationSelect);
+        filtersBody.appendChild(saveLocationGroup);
+
         container.appendChild(filtersBody);
         return container;
     }
@@ -2116,8 +2153,8 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         // PDF Download button (only if open access PDF available)
         if (paper.openAccessPdf?.url) {
             const pdfBtn = ztoolkit.UI.createElement(doc, "button", {
-                properties: { innerText: "📥 PDF" },
-                styles: { ...actionBtnStyle, backgroundColor: "#e8f5e9", color: "#2e7d32", border: "1px solid #a5d6a7" },
+                properties: { innerText: "🔗 PDF" },
+                styles: { ...actionBtnStyle, backgroundColor: "#e3f2fd", color: "#1976d2", border: "1px solid #90caf9" },
                 listeners: [{
                     type: "click",
                     listener: (e: Event) => {
@@ -2339,41 +2376,87 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
 
     /**
      * Add a Semantic Scholar paper to Zotero library
+     * 
+     * Follows Zotero 7 API patterns:
+     * 1. Create item with new Zotero.Item(type)
+     * 2. Set libraryID
+     * 3. Populate fields with setField()
+     * 4. First saveTx() to generate item ID
+     * 5. Add to collection if configured
+     * 6. Second saveTx() to persist collection relationship
+     * 7. Attach PDF if available
      */
     private static async addPaperToZotero(paper: SemanticScholarPaper): Promise<Zotero.Item | null> {
         try {
-            // Try to import via DOI first (best method)
-            if (paper.externalIds?.DOI) {
-                const doi = paper.externalIds.DOI;
-                Zotero.debug(`[Seer AI] Adding paper via DOI: ${doi}`);
+            Zotero.debug(`[Seer AI] Adding paper to Zotero: ${paper.title}`);
 
-                // Use Zotero's DOI import
-                const items = await Zotero.Translate.createFromDOI(doi).translate({
-                    libraryID: Zotero.Libraries.userLibraryID,
-                    collections: [],
-                    saveAttachments: true
-                });
-
-                if (items && items.length > 0) {
-                    return items[0] as Zotero.Item;
+            // Determine item type based on publication types
+            type ZoteroItemType = 'journalArticle' | 'conferencePaper' | 'book';
+            let itemType: ZoteroItemType = 'journalArticle';
+            if (paper.publicationTypes) {
+                if (paper.publicationTypes.includes('Conference')) {
+                    itemType = 'conferencePaper';
+                } else if (paper.publicationTypes.includes('Book')) {
+                    itemType = 'book';
                 }
             }
 
-            // Fallback: Create item manually
-            Zotero.debug(`[Seer AI] Creating item manually for: ${paper.title}`);
+            // 1. Create the item
+            const newItem = new Zotero.Item(itemType);
 
-            await Zotero.DB.executeTransaction(async function () {
-                const newItem = new Zotero.Item('journalArticle');
-                newItem.setField('title', paper.title);
+            // 2. Determine library ownership based on selected save location
+            const saveLocation = currentSearchState.saveLocation || 'user';
+            let targetLibraryId = Zotero.Libraries.userLibraryID;
+            let targetCollectionId: number | null = null;
 
-                if (paper.abstract) newItem.setField('abstractNote', paper.abstract);
-                if (paper.year) newItem.setField('date', String(paper.year));
-                if (paper.venue) newItem.setField('publicationTitle', paper.venue);
-                if (paper.externalIds?.DOI) newItem.setField('DOI', paper.externalIds.DOI);
-                if (paper.url) newItem.setField('url', paper.url);
+            if (saveLocation === 'user') {
+                // Default: user library
+                targetLibraryId = Zotero.Libraries.userLibraryID;
+            } else if (saveLocation.startsWith('lib_')) {
+                // Group library
+                targetLibraryId = parseInt(saveLocation.replace('lib_', ''), 10);
+            } else if (saveLocation.startsWith('col_')) {
+                // Collection - need to find its library ID
+                targetCollectionId = parseInt(saveLocation.replace('col_', ''), 10);
+                try {
+                    const collection = Zotero.Collections.get(targetCollectionId);
+                    if (collection) {
+                        targetLibraryId = collection.libraryID;
+                    }
+                } catch (e) {
+                    Zotero.debug(`[Seer AI] Error getting collection ${targetCollectionId}: ${e}`);
+                }
+            }
 
-                // Add authors
-                const creators = paper.authors?.slice(0, 10).map(author => {
+            newItem.libraryID = targetLibraryId;
+
+            // 3. Populate metadata fields
+            newItem.setField('title', paper.title);
+
+            if (paper.abstract) {
+                newItem.setField('abstractNote', paper.abstract);
+            }
+            if (paper.year) {
+                newItem.setField('date', String(paper.year));
+            }
+            if (paper.venue) {
+                // Use appropriate field based on item type
+                if (itemType === 'conferencePaper') {
+                    newItem.setField('proceedingsTitle', paper.venue);
+                } else {
+                    newItem.setField('publicationTitle', paper.venue);
+                }
+            }
+            if (paper.externalIds?.DOI) {
+                newItem.setField('DOI', paper.externalIds.DOI);
+            }
+            if (paper.url) {
+                newItem.setField('url', paper.url);
+            }
+
+            // Add authors/creators
+            if (paper.authors && paper.authors.length > 0) {
+                const creators = paper.authors.slice(0, 20).map(author => {
                     const nameParts = author.name.trim().split(' ');
                     const lastName = nameParts.pop() || author.name;
                     const firstName = nameParts.join(' ');
@@ -2382,21 +2465,62 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
                         lastName,
                         creatorType: 'author' as const
                     };
-                }) || [];
-
+                });
                 newItem.setCreators(creators);
-                await newItem.saveTx();
-            });
-
-            // Return the created item
-            const search = new Zotero.Search({ libraryID: Zotero.Libraries.userLibraryID });
-            search.addCondition('title', 'is', paper.title);
-            const ids = await search.search();
-            if (ids.length > 0) {
-                return Zotero.Items.get(ids[0]) as Zotero.Item;
             }
 
-            return null;
+            // 4. First save to generate item ID (required before collection assignment)
+            await newItem.saveTx();
+            Zotero.debug(`[Seer AI] Item saved with ID: ${newItem.id} to library ${targetLibraryId}`);
+
+            // 5. Add to collection if one was selected
+            if (targetCollectionId !== null) {
+                try {
+                    newItem.addToCollection(targetCollectionId);
+                    await newItem.saveTx(); // Second save to persist collection relationship
+                    Zotero.debug(`[Seer AI] Item added to collection ${targetCollectionId}`);
+                } catch (colError) {
+                    Zotero.debug(`[Seer AI] Error adding to collection: ${colError}`);
+                }
+            }
+
+            // 6. Attach PDF if open access URL is available, otherwise try Find Full Text
+            if (paper.openAccessPdf?.url) {
+                try {
+                    Zotero.debug(`[Seer AI] Downloading PDF from: ${paper.openAccessPdf.url}`);
+
+                    // Use Zotero's built-in attachment import from URL
+                    await Zotero.Attachments.importFromURL({
+                        url: paper.openAccessPdf.url,
+                        parentItemID: newItem.id,
+                        title: `${paper.title}.pdf`,
+                        contentType: 'application/pdf'
+                    });
+
+                    Zotero.debug(`[Seer AI] PDF attached successfully`);
+                } catch (pdfError) {
+                    // PDF download failure - try Find Full Text as fallback
+                    Zotero.debug(`[Seer AI] PDF download failed, trying Find Full Text: ${pdfError}`);
+                    try {
+                        await (Zotero.Attachments as any).addAvailablePDF(newItem);
+                        Zotero.debug(`[Seer AI] Find Full Text initiated`);
+                    } catch (findError) {
+                        Zotero.debug(`[Seer AI] Find Full Text failed (non-fatal): ${findError}`);
+                    }
+                }
+            } else {
+                // No open access PDF - trigger Zotero's "Find Full Text"
+                try {
+                    Zotero.debug(`[Seer AI] No open access PDF, initiating Find Full Text...`);
+                    await (Zotero.Attachments as any).addAvailablePDF(newItem);
+                    Zotero.debug(`[Seer AI] Find Full Text initiated`);
+                } catch (findError) {
+                    // Find Full Text failure is non-fatal
+                    Zotero.debug(`[Seer AI] Find Full Text failed (non-fatal): ${findError}`);
+                }
+            }
+
+            return newItem;
         } catch (error) {
             Zotero.debug(`[Seer AI] Error adding paper to Zotero: ${error}`);
             return null;
@@ -2865,6 +2989,43 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
             }
         } catch (e) {
             Zotero.debug(`[Seer AI] Error populating filter select: ${e}`);
+        }
+    }
+
+    /**
+     * Populate the save location dropdown for search imports
+     */
+    private static populateSaveLocationSelect(select: HTMLSelectElement): void {
+        const doc = select.ownerDocument;
+        if (!doc) return;
+
+        try {
+            const libraries = Zotero.Libraries.getAll();
+            for (const library of libraries) {
+                // Library option
+                const libOption = doc.createElement("option");
+                // Use 'user' for user library (matches default), 'lib_ID' for group libraries
+                libOption.value = library.libraryID === Zotero.Libraries.userLibraryID ? "user" : `lib_${library.libraryID}`;
+                libOption.textContent = `📚 ${library.name}`;
+                if (currentSearchState.saveLocation === libOption.value) {
+                    libOption.selected = true;
+                }
+                select.appendChild(libOption);
+
+                // Get collections for this library
+                const collections = Zotero.Collections.getByLibrary(library.libraryID);
+                for (const collection of collections) {
+                    const colOption = doc.createElement("option");
+                    colOption.value = `col_${collection.id}`;
+                    colOption.textContent = `  📁 ${collection.name}`;
+                    if (currentSearchState.saveLocation === colOption.value) {
+                        colOption.selected = true;
+                    }
+                    select.appendChild(colOption);
+                }
+            }
+        } catch (e) {
+            Zotero.debug(`[Seer AI] Error populating save location select: ${e}`);
         }
     }
 

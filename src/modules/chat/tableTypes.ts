@@ -166,6 +166,8 @@ export interface SearchState {
     minCitationCount?: number;
     venue?: string;
     sortBy: 'relevance' | 'citationCount:desc' | 'publicationDate:desc';
+    // Save location: 'user' for user library, 'lib_ID' for group library, 'col_ID' for collection
+    saveLocation: string;
 }
 
 export const defaultSearchState: SearchState = {
@@ -176,5 +178,6 @@ export const defaultSearchState: SearchState = {
     fieldsOfStudy: [],
     publicationTypes: [],
     sortBy: 'relevance',
+    saveLocation: 'user', // Default to user library
 };
 
