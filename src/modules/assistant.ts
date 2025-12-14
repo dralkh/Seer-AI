@@ -118,6 +118,245 @@ async function findPdfViaZotero(
     }
 }
 
+/**
+ * Find PDF via arXiv - direct URL pattern for arXiv papers
+ * ArXiv PDFs are always at https://arxiv.org/pdf/{id}.pdf
+ */
+async function findPdfViaArxiv(arxivId?: string): Promise<string | null> {
+    if (!arxivId) return null;
+
+    // Normalize arXiv ID (remove version suffix if present for URL, keep for specificity)
+    const normalizedId = arxivId.replace(/^arxiv:/i, '');
+    const pdfUrl = `https://arxiv.org/pdf/${normalizedId}.pdf`;
+
+    try {
+        Zotero.debug(`[seerai] arXiv: Checking ${pdfUrl}`);
+        const response = await Zotero.HTTP.request("HEAD", pdfUrl, { timeout: 5000 });
+        if (response.status === 200) {
+            Zotero.debug(`[seerai] arXiv: Found PDF at ${pdfUrl}`);
+            return pdfUrl;
+        }
+    } catch (error) {
+        Zotero.debug(`[seerai] arXiv: Request failed: ${error}`);
+    }
+    return null;
+}
+
+/**
+ * Find PDF via PubMed Central using PMID
+ * First converts PMID to PMCID, then constructs PDF URL
+ */
+async function findPdfViaPmc(pmid?: string): Promise<string | null> {
+    if (!pmid) return null;
+
+    try {
+        // Use NCBI ELink to convert PMID to PMCID
+        const idUrl = `https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pubmed&db=pmc&id=${pmid}&retmode=json`;
+        Zotero.debug(`[seerai] PMC: Looking up PMCID for PMID ${pmid}`);
+
+        const resp = await Zotero.HTTP.request("GET", idUrl, {
+            responseType: "json",
+            timeout: 10000
+        });
+
+        const data = resp.response as any;
+        const linksets = data?.linksets?.[0]?.linksetdbs;
+        const pmcLink = linksets?.find((l: any) => l.dbto === "pmc");
+
+        if (pmcLink?.links?.[0]) {
+            const pmcid = pmcLink.links[0];
+            const pdfUrl = `https://www.ncbi.nlm.nih.gov/pmc/articles/PMC${pmcid}/pdf/`;
+            Zotero.debug(`[seerai] PMC: Found PMCID ${pmcid}, PDF at ${pdfUrl}`);
+            return pdfUrl;
+        }
+        Zotero.debug(`[seerai] PMC: No PMCID found for PMID ${pmid}`);
+    } catch (error) {
+        Zotero.debug(`[seerai] PMC: Request failed: ${error}`);
+    }
+    return null;
+}
+
+/**
+ * Find PDF via bioRxiv/medRxiv for preprints
+ * Only works for DOIs starting with 10.1101/
+ */
+async function findPdfViaBiorxiv(doi?: string): Promise<string | null> {
+    if (!doi || !doi.startsWith("10.1101/")) return null;
+
+    // Try bioRxiv first
+    const biorxivUrl = `https://www.biorxiv.org/content/${doi}v1.full.pdf`;
+    try {
+        Zotero.debug(`[seerai] bioRxiv: Checking ${biorxivUrl}`);
+        const response = await Zotero.HTTP.request("HEAD", biorxivUrl, { timeout: 5000 });
+        if (response.status === 200) {
+            Zotero.debug(`[seerai] bioRxiv: Found PDF`);
+            return biorxivUrl;
+        }
+    } catch { /* try medRxiv */ }
+
+    // Try medRxiv
+    const medrxivUrl = `https://www.medrxiv.org/content/${doi}v1.full.pdf`;
+    try {
+        Zotero.debug(`[seerai] medRxiv: Checking ${medrxivUrl}`);
+        const response = await Zotero.HTTP.request("HEAD", medrxivUrl, { timeout: 5000 });
+        if (response.status === 200) {
+            Zotero.debug(`[seerai] medRxiv: Found PDF`);
+            return medrxivUrl;
+        }
+    } catch (error) {
+        Zotero.debug(`[seerai] bioRxiv/medRxiv: Request failed: ${error}`);
+    }
+    return null;
+}
+
+/**
+ * Find PDF via Europe PMC - alternative OA source
+ * Searches by DOI or PMID and returns PDF link if available
+ */
+async function findPdfViaEuropePmc(doi?: string, pmid?: string): Promise<string | null> {
+    const query = doi ? `DOI:${doi}` : pmid ? `EXT_ID:${pmid}` : null;
+    if (!query) return null;
+
+    try {
+        const url = `https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=${encodeURIComponent(query)}&format=json`;
+        Zotero.debug(`[seerai] EuropePMC: Searching with query ${query}`);
+
+        const resp = await Zotero.HTTP.request("GET", url, {
+            responseType: "json",
+            timeout: 10000
+        });
+
+        const data = resp.response as any;
+        const result = data?.resultList?.result?.[0];
+
+        if (result?.pmcid) {
+            const pdfUrl = `https://europepmc.org/backend/ptpmcrender.fcgi?accid=${result.pmcid}&blobtype=pdf`;
+            Zotero.debug(`[seerai] EuropePMC: Found PMCID ${result.pmcid}`);
+            return pdfUrl;
+        }
+        Zotero.debug(`[seerai] EuropePMC: No PMCID found`);
+    } catch (error) {
+        Zotero.debug(`[seerai] EuropePMC: Request failed: ${error}`);
+    }
+    return null;
+}
+
+/**
+ * Download PDF from URL and attach to a Zotero item
+ */
+async function downloadAndAttachPdf(
+    item: Zotero.Item,
+    pdfUrl: string
+): Promise<boolean> {
+    try {
+        Zotero.debug(`[seerai] Downloading PDF from: ${pdfUrl}`);
+        await Zotero.Attachments.importFromURL({
+            url: pdfUrl,
+            parentItemID: item.id,
+            title: `${item.getField('title')}.pdf`,
+            contentType: 'application/pdf'
+        });
+        Zotero.debug(`[seerai] PDF attached successfully`);
+        return true;
+    } catch (error) {
+        Zotero.debug(`[seerai] PDF download/attach failed: ${error}`);
+        return false;
+    }
+}
+
+/**
+ * Extract PMID from Zotero item's Extra field
+ * Looks for patterns like "PMID: 12345678" or "pmid: 12345678"
+ */
+function extractPmidFromItem(item: Zotero.Item): string | undefined {
+    const extra = item.getField('extra') as string || '';
+    const match = extra.match(/pmid:\s*(\d+)/i);
+    return match ? match[1] : undefined;
+}
+
+/**
+ * Extract ArXiv ID from Zotero item's Extra field
+ * Looks for patterns like "arXiv: 2301.12345" or "arxiv:2301.12345v1"
+ */
+function extractArxivFromItem(item: Zotero.Item): string | undefined {
+    const extra = item.getField('extra') as string || '';
+    const match = extra.match(/arxiv:\s*([\d.]+(?:v\d+)?)/i);
+    return match ? match[1] : undefined;
+}
+
+/**
+ * Run 6-step PDF discovery for a Zotero item and attach if found
+ * Returns true if PDF was successfully found and attached
+ */
+async function findAndAttachPdfForItem(
+    item: Zotero.Item,
+    onProgress?: (step: string) => void
+): Promise<boolean> {
+    const doi = item.getField('DOI') as string || undefined;
+    const pmid = extractPmidFromItem(item);
+    const arxivId = extractArxivFromItem(item);
+    const title = item.getField('title') as string || undefined;
+    const url = item.getField('url') as string || undefined;
+
+    Zotero.debug(`[seerai] findAndAttachPdfForItem: DOI=${doi}, PMID=${pmid}, ArXiv=${arxivId}`);
+
+    // Step 1: Zotero resolver
+    onProgress?.("📚 Zotero...");
+    const zoteroResult = await findPdfViaZotero(doi, arxivId, pmid, title, url);
+    if (zoteroResult) {
+        // Zotero already attached the PDF via temp item, need to re-run with real item
+        try {
+            const attachment = await (Zotero.Attachments as any).addAvailablePDF(item);
+            if (attachment) return true;
+        } catch { /* continue to other methods */ }
+    }
+
+    // Step 2: arXiv
+    if (arxivId) {
+        onProgress?.("📄 arXiv...");
+        const arxivResult = await findPdfViaArxiv(arxivId);
+        if (arxivResult && await downloadAndAttachPdf(item, arxivResult)) {
+            return true;
+        }
+    }
+
+    // Step 3: PubMed Central
+    if (pmid) {
+        onProgress?.("🏥 PMC...");
+        const pmcResult = await findPdfViaPmc(pmid);
+        if (pmcResult && await downloadAndAttachPdf(item, pmcResult)) {
+            return true;
+        }
+    }
+
+    // Step 4: bioRxiv/medRxiv
+    if (doi?.startsWith("10.1101/")) {
+        onProgress?.("🧬 bioRxiv...");
+        const biorxivResult = await findPdfViaBiorxiv(doi);
+        if (biorxivResult && await downloadAndAttachPdf(item, biorxivResult)) {
+            return true;
+        }
+    }
+
+    // Step 5: Unpaywall
+    if (doi) {
+        onProgress?.("🔎 Unpaywall...");
+        const unpaywallResult = await unpaywallService.getPdfUrl(doi);
+        if (unpaywallResult && await downloadAndAttachPdf(item, unpaywallResult)) {
+            return true;
+        }
+    }
+
+    // Step 6: Europe PMC
+    onProgress?.("🇪🇺 EuropePMC...");
+    const epmcResult = await findPdfViaEuropePmc(doi, pmid);
+    if (epmcResult && await downloadAndAttachPdf(item, epmcResult)) {
+        return true;
+    }
+
+    return false;
+}
+
 // Filter presets
 interface FilterPreset {
     name: string;
@@ -2393,9 +2632,60 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
                         return;
                     }
 
-                    // Step 2: Try Unpaywall if DOI available
-                    pdfDiscoveryBtn.textContent = "🔎 Unpaywall...";
+                    // Step 2: Try arXiv if ArXiv ID available (100% reliable)
+                    if (paper.externalIds?.ArXiv) {
+                        pdfDiscoveryBtn.textContent = "📄 arXiv...";
+                        const arxivResult = await findPdfViaArxiv(paper.externalIds.ArXiv);
+                        if (arxivResult) {
+                            Zotero.debug(`[seerai] arXiv found PDF: ${arxivResult}`);
+                            buttonState = 'pdf';
+                            pdfUrl = arxivResult;
+                            pdfDiscoveryBtn.textContent = "📄 arXiv PDF";
+                            pdfDiscoveryBtn.style.backgroundColor = "#e8f5e9";
+                            pdfDiscoveryBtn.style.color = "#2e7d32";
+                            pdfDiscoveryBtn.style.border = "1px solid #a5d6a7";
+                            pdfDiscoveryBtn.disabled = false;
+                            return;
+                        }
+                    }
+
+                    // Step 3: Try PubMed Central if PMID available
+                    if (paper.externalIds?.PMID) {
+                        pdfDiscoveryBtn.textContent = "🏥 PMC...";
+                        const pmcResult = await findPdfViaPmc(paper.externalIds.PMID);
+                        if (pmcResult) {
+                            Zotero.debug(`[seerai] PMC found PDF: ${pmcResult}`);
+                            buttonState = 'pdf';
+                            pdfUrl = pmcResult;
+                            pdfDiscoveryBtn.textContent = "🏥 PMC PDF";
+                            pdfDiscoveryBtn.style.backgroundColor = "#e8f5e9";
+                            pdfDiscoveryBtn.style.color = "#2e7d32";
+                            pdfDiscoveryBtn.style.border = "1px solid #a5d6a7";
+                            pdfDiscoveryBtn.disabled = false;
+                            return;
+                        }
+                    }
+
+                    // Step 4: Try bioRxiv/medRxiv if DOI starts with 10.1101
+                    if (paper.externalIds?.DOI?.startsWith("10.1101/")) {
+                        pdfDiscoveryBtn.textContent = "🧬 bioRxiv...";
+                        const biorxivResult = await findPdfViaBiorxiv(paper.externalIds.DOI);
+                        if (biorxivResult) {
+                            Zotero.debug(`[seerai] bioRxiv found PDF: ${biorxivResult}`);
+                            buttonState = 'pdf';
+                            pdfUrl = biorxivResult;
+                            pdfDiscoveryBtn.textContent = "🧬 bioRxiv PDF";
+                            pdfDiscoveryBtn.style.backgroundColor = "#e8f5e9";
+                            pdfDiscoveryBtn.style.color = "#2e7d32";
+                            pdfDiscoveryBtn.style.border = "1px solid #a5d6a7";
+                            pdfDiscoveryBtn.disabled = false;
+                            return;
+                        }
+                    }
+
+                    // Step 5: Try Unpaywall if DOI available
                     if (paper.externalIds?.DOI) {
+                        pdfDiscoveryBtn.textContent = "🔎 Unpaywall...";
                         Zotero.debug(`[seerai] Trying Unpaywall for DOI: ${paper.externalIds.DOI}`);
                         const unpaywallResult = await unpaywallService.getPdfUrl(paper.externalIds.DOI);
                         if (unpaywallResult) {
@@ -2412,7 +2702,22 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
                         }
                     }
 
-                    // Step 3: Try Firecrawl if configured
+                    // Step 6: Try Europe PMC as final fallback
+                    pdfDiscoveryBtn.textContent = "🇪🇺 EuropePMC...";
+                    const epmcResult = await findPdfViaEuropePmc(paper.externalIds?.DOI, paper.externalIds?.PMID);
+                    if (epmcResult) {
+                        Zotero.debug(`[seerai] EuropePMC found PDF: ${epmcResult}`);
+                        buttonState = 'pdf';
+                        pdfUrl = epmcResult;
+                        pdfDiscoveryBtn.textContent = "🇪🇺 EuropePMC PDF";
+                        pdfDiscoveryBtn.style.backgroundColor = "#e8f5e9";
+                        pdfDiscoveryBtn.style.color = "#2e7d32";
+                        pdfDiscoveryBtn.style.border = "1px solid #a5d6a7";
+                        pdfDiscoveryBtn.disabled = false;
+                        return;
+                    }
+
+                    // Step 7: Try Firecrawl if configured (commented out)
                     /*
                     if (firecrawlService.isConfigured()) {
                         Zotero.debug(`[seerai] Trying Firecrawl for: ${paper.title.slice(0, 50)}...`);
@@ -5893,7 +6198,16 @@ Task: ${columnPrompt}`;
                     } else if (hasPDFForIndicator) {
                         td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
                     } else {
-                        td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">No source</span>`;
+                        // Check if paper has identifiers for PDF search
+                        const hasDoi = !!(itemForIndicator?.getField('DOI'));
+                        const hasArxiv = !!extractArxivFromItem(itemForIndicator);
+                        const hasPmid = !!extractPmidFromItem(itemForIndicator);
+
+                        if (hasDoi || hasArxiv || hasPmid) {
+                            td.innerHTML = `<span class="search-pdf-btn" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔍 Search PDF</span>`;
+                        } else {
+                            td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">No source</span>`;
+                        }
                     }
                 } else {
                     td.innerHTML = parseMarkdown(cellValue);
@@ -5915,6 +6229,32 @@ Task: ${columnPrompt}`;
                     });
 
                     if (currentlyEmpty && isComputed) {
+                        // Check if "Search PDF" button was clicked
+                        const searchPdfBtn = td.querySelector('.search-pdf-btn');
+                        if (searchPdfBtn && !hasNotes && !hasPDF && item) {
+                            // Run PDF discovery pipeline
+                            td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px;">⏳ Searching...</span>`;
+                            td.style.cursor = "wait";
+
+                            try {
+                                const success = await findAndAttachPdfForItem(item, (step) => {
+                                    td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px;">⏳ ${step}</span>`;
+                                });
+
+                                if (success) {
+                                    td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
+                                    td.style.cursor = "pointer";
+                                } else {
+                                    td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">❌ Not found</span>`;
+                                    td.style.cursor = "pointer";
+                                }
+                            } catch (err) {
+                                td.innerHTML = `<span style="color: #c62828; font-size: 11px;">Error</span>`;
+                                td.style.cursor = "pointer";
+                            }
+                            return;
+                        }
+
                         if (hasNotes || hasPDF) {
                             td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px;">⏳ ${hasNotes ? 'Generating...' : 'Processing...'}</span>`;
                             td.style.cursor = "wait";
