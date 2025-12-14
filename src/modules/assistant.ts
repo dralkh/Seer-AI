@@ -2681,21 +2681,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         } else {
             // === CARD LAYOUT (no columns yet) ===
             // Show prompt to add first column
-            const addColumnPrompt = ztoolkit.UI.createElement(doc, "div", {
-                styles: {
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: "8px",
-                    padding: "12px",
-                    backgroundColor: "var(--background-tertiary)",
-                    borderBottom: "1px solid var(--border-primary)",
-                    fontSize: "12px",
-                    color: "var(--text-secondary)"
-                }
-            });
-            addColumnPrompt.innerHTML = `💡 Click <strong>➕ Column</strong> above to add AI analysis columns`;
-            container.appendChild(addColumnPrompt);
+
 
             // Render result cards (original behavior)
             currentSearchResults.forEach(paper => {
