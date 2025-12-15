@@ -261,50 +261,6 @@ seerai/
 └── package.json
 ```
 
----
-
-## Future Implementations Ideas
-
-Propose several advanced features to enhance seerai's capabilities. These are currently in the just idea board.
-
-### 1. Prompt Library
-A built-in library of research-focused prompt templates to streamline common tasks.
-- **Templates**: Pre-defined prompts for summarizing papers, comparing methodologies, identifying research gaps, and writing literature reviews from settings.
-- **Smart Placeholders**: Dynamic inputs for topics (#), specific papers (/), authors (@), and collections (^) to contextualize prompts automatically.
-- **Custom Prompts**: Ability for users to create, save, and manage their own reusable prompt templates.
-
-### 2. Advanced Search Capabilities
-Enhanced search functionality to help users find relevant literature more effectively.
-- **Autocomplete**: Intelligent suggestions for tags, creators, and collections as you type.
-- **Complex Queries**: Support for boolean logic (AND/OR) and nested search conditions (e.g., "Title contains X AND Year > 2020").
-- **Field-Specific Search**: Dedicated filters for titles, authors, years, and tags.
-
-### 3. Semantic Vector Search
-Moving beyond keyword matching to understanding the meaning of your queries.
-- **Voice, Transcription, Embedding Integration**: Support for OpenAI-compatible embedding, voice, transcription models (e.g., `text-embedding-3-small`, local Ollama embeddings).
-- **Contextual Retrieval**: Find papers based on conceptual similarity rather than just exact text matches.
-- **In-Memory Vector Store** — Fast, local indexing of session-relevant papers for semantic analysis.
-
-### 4. Data Verification & Quality Control
-- **Verifier Button** — One-click verification to check all extracted data against source text.
-- **Confidence Scores** — AI-generated confidence ratings for each extracted data point.
-- **Source Highlighting** — Click a cell to see the exact passage in the paper where the data came from.
-
-### 5. Firecrawl API Integration
-- **URL Discovery** — Use Firecrawl API to discover and extract PDF URLs for papers that don't have direct links in Semantic Scholar results or tables, integration with chat tab with enabled web search.
-
-### 6. Semantic Scholar Enhancements (WIP)
-- **Saved Search History** — Saved search history shown in drop down of Past searches button - when clicking one of the list it would return user to previous search operation with all data saved and persisted - with button clear saved search history.
-
-
-### Others
-Citations referencing within tables and chat on generation -
-MCP
-Connectors
-UI revamp
-
----
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.

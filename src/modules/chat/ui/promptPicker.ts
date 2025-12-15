@@ -325,8 +325,9 @@ export async function showPromptPicker(
     const closeHandler = (e: MouseEvent) => {
         // Close if click is outside container AND outside the button
         // AND not inside the editor overlay (which is child of container)
-        const target = e.target as Node;
-        if (!container.contains(target) && !anchorEl.contains(target)) {
+        // Use composedPath() to handle clicks on elements that might be removed from DOM
+        const path = e.composedPath();
+        if (!path.includes(container) && !path.includes(anchorEl)) {
             close();
         }
     };

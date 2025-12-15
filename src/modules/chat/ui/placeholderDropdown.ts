@@ -121,9 +121,13 @@ export function initPlaceholderAutocomplete(
     input.addEventListener('blur', handleBlur);
 
     // Also listen for keyup as backup for input detection
-    input.addEventListener('keyup', () => {
+    input.addEventListener('keyup', (e: KeyboardEvent) => {
+        // Ignore navigation keys to prevent resetting selection
+        if (['ArrowUp', 'ArrowDown', 'Enter', 'Escape', 'Tab'].includes(e.key)) {
+            return;
+        }
         // Re-check on keyup in case input event didn't fire
-        handleInput();
+        handleInput(e);
     });
 
     state.inputElement = input;
@@ -626,4 +630,59 @@ export function createPlaceholderMenuButton(
 
     container.appendChild(button);
     return container;
+}
+
+/**
+ * Trigger the next available placeholder in the input
+ */
+export function triggerNextPlaceholder(doc: Document, input: HTMLInputElement): void {
+    const text = input.value;
+    // Regex to find placeholders: trigger char + word chars
+    // We look for triggers that are preceded by start-of-string or whitespace
+    // and NOT immediately followed by a word char (to ensure we match full words)
+    // Matches: /paper, #topic, /
+    // Does NOT match: [/paper], [~tag] (because of preceding [)
+    const regex = /(?:^|[\s])([#/@^~$][\w\d-]*)(?=$|[\s.,;:?!])/g;
+
+    let match;
+    let foundMatch = null;
+
+    while ((match = regex.exec(text)) !== null) {
+        const index = match.index;
+        // If matched via space, the capturing group index needs to be adjusted? 
+        // match[1] is the trigger+word.
+        // match.index is start of full match (including header space).
+        // Let's find exactly where the capturing group starts.
+        const fullMatchStr = match[0]; // e.g. " #topic"
+        const capturedStr = match[1];  // "#topic"
+        const offset = fullMatchStr.indexOf(capturedStr);
+        const placeholderStart = index + offset;
+
+        // Check if character before is '['
+        const charBefore = text[placeholderStart - 1];
+        if (charBefore === '[') {
+            continue;
+        }
+
+        // Found a candidate
+        foundMatch = {
+            start: placeholderStart,
+            end: placeholderStart + capturedStr.length,
+            text: capturedStr
+        };
+        break;
+    }
+
+    if (foundMatch) {
+        Zotero.debug(`[seerai] triggerNextPlaceholder: Found ${foundMatch.text} at ${foundMatch.end}`);
+        input.setSelectionRange(foundMatch.end, foundMatch.end);
+        input.focus();
+
+        // Trigger input event after a small delay to allow UI updates
+        setTimeout(() => {
+            const inputEvent = doc.createEvent('Event');
+            inputEvent.initEvent('input', true, true);
+            input.dispatchEvent(inputEvent);
+        }, 50);
+    }
 }

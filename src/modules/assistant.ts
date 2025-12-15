@@ -36,7 +36,7 @@ import { getTheme } from "../utils/theme";
 // Prompt Library & Placeholder System imports
 import { PromptTemplate, loadPrompts } from "./chat/promptLibrary";
 import { showPromptPicker } from "./chat/ui/promptPicker";
-import { initPlaceholderAutocomplete, createPlaceholderMenuButton, hideDropdown } from "./chat/ui/placeholderDropdown";
+import { initPlaceholderAutocomplete, createPlaceholderMenuButton, hideDropdown, triggerNextPlaceholder } from "./chat/ui/placeholderDropdown";
 import { showChatSettings } from "./chat/ui/chatSettings";
 import { ChatContextManager } from "./chat/context/contextManager";
 import { createContextChipsArea } from "./chat/context/contextUI";
@@ -12406,17 +12406,30 @@ ${tableRows}  </tbody>
             },
             listeners: [
                 {
-                    type: "keypress",
+                    type: "keydown",
                     listener: (e: KeyboardEvent) => {
-                        if (e.key === "Enter" && !e.shiftKey && !this.isStreaming) {
-                            e.preventDefault(); // Prevent newline
-                            this.handleSendWithStreamingAndImages(
-                                input as unknown as HTMLInputElement,
-                                messagesArea,
-                                stateManager,
-                                pastedImages,
-                                () => { pastedImages.length = 0; updateImagePreview(); }
-                            );
+                        if (e.key === "Enter") {
+                            if (!e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !this.isStreaming) {
+                                e.preventDefault(); // Prevent newline
+                                this.handleSendWithStreamingAndImages(
+                                    input as unknown as HTMLInputElement,
+                                    messagesArea,
+                                    stateManager,
+                                    pastedImages,
+                                    () => { pastedImages.length = 0; updateImagePreview(); }
+                                );
+                            } else if (e.ctrlKey || e.altKey || e.metaKey) {
+                                // Explicitly insert newline for modifiers that might not default to it
+                                e.preventDefault();
+                                const start = input.selectionStart || 0;
+                                const end = input.selectionEnd || 0;
+                                const val = input.value;
+                                input.value = val.substring(0, start) + "\n" + val.substring(end);
+                                input.selectionStart = input.selectionEnd = start + 1;
+                                // Trigger input event to auto-resize
+                                input.dispatchEvent(new Event('input'));
+                            }
+                            // Shift+Enter falls through to default behavior (newline)
                         }
                     }
                 },
@@ -12695,6 +12708,9 @@ ${tableRows}  </tbody>
                             const inputEvent = doc.createEvent('Event');
                             inputEvent.initEvent('input', true, true);
                             input.dispatchEvent(inputEvent);
+
+                            // Trigger first placeholder
+                            triggerNextPlaceholder(doc, input);
                         }
                     });
                 }
@@ -12737,6 +12753,9 @@ ${tableRows}  </tbody>
             // Find and remove the trigger pattern from input
             const cleanedValue = currentValue.replace(/\[[^\]]+\]\s*$/, '').trim();
             input.value = cleanedValue;
+
+            // Trigger next placeholder
+            triggerNextPlaceholder(doc, input);
         });
 
         inputArea.appendChild(settingsContainer);
@@ -13576,13 +13595,7 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
             actionsDiv.appendChild(editBtn);
         }
 
-        // Retry button (for assistant messages)
-        if (isAssistant && !this.isStreaming) {
-            const retryBtn = this.createActionButton(doc, "🔄", "Retry", () => {
-                this.handleRetryMessage(container);
-            });
-            actionsDiv.appendChild(retryBtn);
-        }
+
 
         headerDiv.appendChild(senderDiv);
         headerDiv.appendChild(actionsDiv);
@@ -13791,22 +13804,7 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
         this.regenerateLastResponse(container);
     }
 
-    /**
-     * Handle retry message action - regenerates the last assistant response
-     */
-    private static handleRetryMessage(container: HTMLElement) {
-        if (this.isStreaming) return;
 
-        // Remove the last assistant message
-        const lastMsg = conversationMessages[conversationMessages.length - 1];
-        if (lastMsg && (lastMsg.role === 'assistant' || lastMsg.role === 'error')) {
-            conversationMessages.pop();
-        }
-
-        // Re-render and regenerate
-        this.rerenderChat(container);
-        this.regenerateLastResponse(container);
-    }
 
     /**
      * Re-render the chat area with current messages
