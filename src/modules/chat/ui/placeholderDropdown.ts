@@ -88,7 +88,7 @@ export function initPlaceholderAutocomplete(
             case 'Enter':
                 if (state.results.length > 0 && state.dropdown.style.display !== 'none') {
                     e.preventDefault();
-                    e.stopPropagation();
+                    e.stopImmediatePropagation();
                     selectCurrentItem(onInsert);
                 }
                 break;
@@ -99,7 +99,7 @@ export function initPlaceholderAutocomplete(
             case 'Tab':
                 if (state.results.length > 0 && state.dropdown.style.display !== 'none') {
                     e.preventDefault();
-                    e.stopPropagation();
+                    e.stopImmediatePropagation();
                     selectCurrentItem(onInsert);
                 }
                 break;
@@ -198,6 +198,13 @@ export function hideDropdown(): void {
     state.trigger = null;
     state.results = [];
     state.selectedIndex = 0;
+}
+
+/**
+ * Check if the dropdown is currently open and has results
+ */
+export function isDropdownOpen(): boolean {
+    return !!(state.dropdown && state.dropdown.style.display !== 'none' && state.results.length > 0);
 }
 
 /**

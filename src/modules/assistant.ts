@@ -36,7 +36,7 @@ import { getTheme } from "../utils/theme";
 // Prompt Library & Placeholder System imports
 import { PromptTemplate, loadPrompts } from "./chat/promptLibrary";
 import { showPromptPicker } from "./chat/ui/promptPicker";
-import { initPlaceholderAutocomplete, createPlaceholderMenuButton, hideDropdown, triggerNextPlaceholder } from "./chat/ui/placeholderDropdown";
+import { initPlaceholderAutocomplete, createPlaceholderMenuButton, hideDropdown, triggerNextPlaceholder, isDropdownOpen } from "./chat/ui/placeholderDropdown";
 import { showChatSettings } from "./chat/ui/chatSettings";
 import { ChatContextManager } from "./chat/context/contextManager";
 import { createContextChipsArea } from "./chat/context/contextUI";
@@ -7667,16 +7667,16 @@ Task: ${columnPrompt}`;
 
         // Add Actions header cell
         const actionsHeader = ztoolkit.UI.createElement(doc, "th", {
-            properties: { innerText: "💾" },
-            attributes: { title: "Save row as note" },
+            properties: { innerText: "Actions" },
+            attributes: { title: "Save or remove row" },
             styles: {
                 padding: "8px 6px",
                 backgroundColor: "var(--background-secondary)",
                 borderBottom: "2px solid rgba(128, 128, 128, 0.5)",
                 borderRight: "1px solid rgba(128, 128, 128, 0.4)",
-                fontSize: "12px",
+                fontSize: "11px",
                 fontWeight: "600",
-                width: "40px",
+                width: "70px",
                 textAlign: "center"
             }
         });
@@ -8031,15 +8031,18 @@ Task: ${columnPrompt}`;
                 tr.appendChild(td);
             });
 
-            // Add actions cell with save button
+            // Add actions cell with save and remove buttons
             const actionsCell = ztoolkit.UI.createElement(doc, "td", {
                 styles: {
                     padding: "4px 8px",
                     borderBottom: "1px solid rgba(128, 128, 128, 0.4)",
                     borderRight: "1px solid rgba(128, 128, 128, 0.4)",
-                    width: "40px",
+                    width: "70px",
                     textAlign: "center",
-                    verticalAlign: "middle"
+                    verticalAlign: "middle",
+                    display: "flex",
+                    gap: "4px",
+                    justifyContent: "center"
                 }
             });
 
@@ -8088,6 +8091,70 @@ Task: ${columnPrompt}`;
             saveRowBtn.addEventListener("mouseenter", () => { saveRowBtn.style.backgroundColor = "rgba(128,128,128,0.2)"; });
             saveRowBtn.addEventListener("mouseleave", () => { saveRowBtn.style.backgroundColor = ""; });
             actionsCell.appendChild(saveRowBtn);
+
+            // Remove button
+            const removeRowBtn = ztoolkit.UI.createElement(doc, "button", {
+                properties: { innerText: "🗑️" },
+                attributes: { title: "Remove this paper from the table" },
+                styles: {
+                    background: "none",
+                    border: "none",
+                    fontSize: "14px",
+                    cursor: "pointer",
+                    padding: "4px",
+                    borderRadius: "4px",
+                    transition: "background-color 0.15s"
+                },
+                listeners: [{
+                    type: "click",
+                    listener: async (e: Event) => {
+                        e.stopPropagation();
+                        const btn = e.target as HTMLElement;
+
+                        // Confirm removal with visual feedback
+                        if (btn.dataset.confirmRemove !== 'true') {
+                            btn.dataset.confirmRemove = 'true';
+                            btn.innerText = "❌";
+                            btn.style.color = "#c62828";
+                            btn.style.backgroundColor = "rgba(198,40,40,0.15)";
+                            btn.title = "Click again to confirm removal";
+                            setTimeout(() => {
+                                btn.dataset.confirmRemove = '';
+                                btn.innerText = "🗑️";
+                                btn.style.color = "";
+                                btn.style.backgroundColor = "";
+                                btn.title = "Remove this paper from the table";
+                            }, 3000);
+                            return;
+                        }
+
+                        // Remove paper from table
+                        if (currentTableConfig) {
+                            // Remove from addedPaperIds
+                            currentTableConfig.addedPaperIds = currentTableConfig.addedPaperIds.filter(
+                                id => id !== row.paperId
+                            );
+
+                            // Remove generated data for this paper
+                            if (currentTableConfig.generatedData && currentTableConfig.generatedData[row.paperId]) {
+                                delete currentTableConfig.generatedData[row.paperId];
+                            }
+
+                            // Save config
+                            const tableStore = getTableStore();
+                            await tableStore.saveConfig(currentTableConfig);
+
+                            // Refresh the table UI
+                            if (currentContainer && currentItem) {
+                                this.renderInterface(currentContainer, currentItem);
+                            }
+                        }
+                    }
+                }]
+            });
+            removeRowBtn.addEventListener("mouseenter", () => { removeRowBtn.style.backgroundColor = "rgba(198,40,40,0.2)"; });
+            removeRowBtn.addEventListener("mouseleave", () => { removeRowBtn.style.backgroundColor = ""; });
+            actionsCell.appendChild(removeRowBtn);
             tr.appendChild(actionsCell);
 
             tbody.appendChild(tr);
@@ -12409,6 +12476,10 @@ ${tableRows}  </tbody>
                     type: "keydown",
                     listener: (e: KeyboardEvent) => {
                         if (e.key === "Enter") {
+                            // If dropdown is open, let the dropdown handler handle Enter
+                            if (isDropdownOpen()) {
+                                return; // Don't send message, dropdown will handle selection
+                            }
                             if (!e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !this.isStreaming) {
                                 e.preventDefault(); // Prevent newline
                                 this.handleSendWithStreamingAndImages(
