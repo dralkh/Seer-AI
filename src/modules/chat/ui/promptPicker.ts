@@ -34,26 +34,24 @@ export async function showPromptPicker(
     anchorEl: HTMLElement,
     options: PromptPickerOptions
 ): Promise<void> {
+    const parentContainer = anchorEl.parentElement;
+    if (!parentContainer) return;
+
     // Remove any existing picker
-    const existing = doc.getElementById('prompt-picker-overlay');
-    if (existing) existing.remove();
-
-    // Create overlay
-    const overlay = doc.createElement('div');
-    overlay.id = 'prompt-picker-overlay';
-    overlay.className = 'prompt-picker-overlay';
-
-    // Calculate position relative to anchor
-    const anchorRect = anchorEl.getBoundingClientRect();
-    const win = doc.defaultView || { innerHeight: 800, innerWidth: 1200 };
+    const existing = parentContainer.querySelector('.prompt-picker-container');
+    if (existing) {
+        existing.remove();
+        return;
+    }
 
     // Create container
     const container = doc.createElement('div');
     container.className = 'prompt-picker-container';
     container.style.cssText = `
-        position: fixed;
-        top: ${Math.min(anchorRect.bottom + 8, win.innerHeight - 500)}px;
-        left: ${Math.max(anchorRect.left - 150, 10)}px;
+        position: absolute;
+        bottom: 100%;
+        left: 0;
+        margin-bottom: 6px;
         width: 380px;
         max-height: 480px;
         background: var(--background-primary);
@@ -63,7 +61,7 @@ export async function showPromptPicker(
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        z-index: 10001;
+        z-index: 10003;
     `;
 
     // State
@@ -87,23 +85,7 @@ export async function showPromptPicker(
     title.style.cssText = 'font-weight: 600; font-size: 14px; color: var(--text-primary);';
     title.textContent = '📚 Prompt Library';
 
-    const closeBtn = doc.createElement('button');
-    closeBtn.textContent = '✕';
-    closeBtn.style.cssText = `
-        background: none;
-        border: none;
-        font-size: 16px;
-        cursor: pointer;
-        color: var(--text-secondary);
-        padding: 4px 8px;
-        border-radius: 4px;
-    `;
-    closeBtn.addEventListener('click', () => close());
-    closeBtn.addEventListener('mouseenter', () => closeBtn.style.background = 'var(--background-tertiary)');
-    closeBtn.addEventListener('mouseleave', () => closeBtn.style.background = 'none');
-
     header.appendChild(title);
-    header.appendChild(closeBtn);
     container.appendChild(header);
 
     // === Search Bar ===
@@ -183,10 +165,11 @@ export async function showPromptPicker(
         display: flex;
         flex-direction: column;
         gap: 6px;
+        min-height: 200px;
     `;
     container.appendChild(listContainer);
 
-    async function renderPromptList() {
+    let renderPromptList = async () => {
         listContainer.innerHTML = '';
 
         try {
@@ -224,7 +207,7 @@ export async function showPromptPicker(
             errorDiv.textContent = 'Failed to load prompts';
             listContainer.appendChild(errorDiv);
         }
-    }
+    };
 
     // === Footer ===
     const footer = doc.createElement('div');
@@ -277,45 +260,47 @@ export async function showPromptPicker(
 
     // Update insert button state when selection changes
     const origRenderPromptList = renderPromptList;
-    const newRenderPromptList = async () => {
+    renderPromptList = async () => {
         await origRenderPromptList();
         insertBtn.disabled = !selectedPrompt;
         insertBtn.style.opacity = selectedPrompt ? '1' : '0.5';
     };
-    // @ts-ignore - Override function
-    renderPromptList = newRenderPromptList;
 
     footer.appendChild(newBtn);
     footer.appendChild(insertBtn);
     container.appendChild(footer);
 
+    // === Assemble and show ===
+    parentContainer.appendChild(container);
+
     // === Close handling ===
     function close() {
-        overlay.remove();
+        container.remove();
         options.onClose?.();
+        doc.removeEventListener('click', closeHandler);
+        doc.removeEventListener('keydown', escHandler);
     }
 
-    overlay.addEventListener('click', (e) => {
-        if (e.target === overlay) close();
-    });
+    const closeHandler = (e: MouseEvent) => {
+        // Close if click is outside container AND outside the button
+        // AND not inside the editor overlay (which is child of container)
+        const target = e.target as Node;
+        if (!container.contains(target) && !anchorEl.contains(target)) {
+            close();
+        }
+    };
 
-    // Escape key
     const escHandler = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
             close();
-            doc.removeEventListener('keydown', escHandler);
+            e.stopPropagation();
         }
     };
-    doc.addEventListener('keydown', escHandler);
 
-    // === Assemble and show ===
-    overlay.appendChild(container);
-
-    // Append to document body or parent element that can contain fixed position
-    const appendTarget = doc.body || doc.documentElement;
-    if (appendTarget) {
-        appendTarget.appendChild(overlay);
-    }
+    setTimeout(() => {
+        doc.addEventListener('click', closeHandler);
+        doc.addEventListener('keydown', escHandler);
+    }, 0);
 
     // Initial render
     await renderPromptList();

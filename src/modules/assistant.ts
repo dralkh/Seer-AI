@@ -37,6 +37,7 @@ import { getTheme } from "../utils/theme";
 import { PromptTemplate, loadPrompts } from "./chat/promptLibrary";
 import { showPromptPicker } from "./chat/ui/promptPicker";
 import { initPlaceholderAutocomplete, createPlaceholderMenuButton, hideDropdown } from "./chat/ui/placeholderDropdown";
+import { showChatSettings } from "./chat/ui/chatSettings";
 import { ChatContextManager } from "./chat/context/contextManager";
 import { createContextChipsArea } from "./chat/context/contextUI";
 import { ContextItem, ContextItemType } from "./chat/context/contextTypes";
@@ -1048,8 +1049,7 @@ export class Assistant {
         // === SELECTION AREA ===
         const selectionArea = this.createSelectionArea(doc, stateManager);
 
-        // === CONTROLS BAR ===
-        const controlsBar = this.createControlsBar(doc, currentContainer!);
+
 
         // === MESSAGES AREA ===
         const messagesArea = ztoolkit.UI.createElement(doc, "div", {
@@ -1080,7 +1080,7 @@ export class Assistant {
 
         // Assemble
         chatContainer.appendChild(selectionArea);
-        chatContainer.appendChild(controlsBar);
+
         chatContainer.appendChild(messagesArea);
         chatContainer.appendChild(inputArea);
 
@@ -11894,199 +11894,7 @@ ${tableRows}  </tbody>
     /**
      * Create the controls bar (Model Selector, Settings, Stop, Clear, Save)
      */
-    private static createControlsBar(doc: Document, container: HTMLElement): HTMLElement {
-        const controlsBar = ztoolkit.UI.createElement(doc, "div", {
-            styles: {
-                display: "flex",
-                gap: "6px",
-                justifyContent: "space-between",
-                alignItems: "center"
-            }
-        });
-
-        // Left side: Model selector
-        const leftControls = ztoolkit.UI.createElement(doc, "div", {
-            styles: { display: "flex", gap: "6px", alignItems: "center" }
-        });
-
-        // Model selector dropdown
-        const modelSelect = ztoolkit.UI.createElement(doc, "select", {
-            properties: { id: "model-selector" },
-            styles: {
-                padding: "4px 8px",
-                fontSize: "11px",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "4px",
-                backgroundColor: "var(--background-primary)",
-                cursor: "pointer",
-                maxWidth: "150px"
-            },
-            listeners: [{
-                type: "change",
-                listener: (e: Event) => {
-                    const select = e.target as HTMLSelectElement;
-                    setActiveModelId(select.value);
-                    Zotero.debug(`[seerai] Active model changed to: ${select.value}`);
-                }
-            }]
-        }) as HTMLSelectElement;
-
-        // Populate model options
-        this.populateModelSelector(modelSelect);
-
-        // Selection Mode Selector
-        const stateManager = getChatStateManager();
-        const modeContainer = ztoolkit.UI.createElement(doc, "div", {
-            styles: { display: "flex", alignItems: "center", gap: "4px", marginLeft: "8px" }
-        });
-
-        const modeLabel = ztoolkit.UI.createElement(doc, "span", {
-            properties: { innerText: "Mode:" },
-            styles: { fontSize: "11px", opacity: "0.8" }
-        });
-
-        const modeSelect = ztoolkit.UI.createElement(doc, "select", {
-            properties: { id: "selection-mode" },
-            styles: {
-                padding: "3px 6px",
-                fontSize: "11px",
-                border: "1px solid var(--border-primary)",
-                borderRadius: "4px",
-                backgroundColor: "var(--select-background)",
-                color: "var(--text-primary)",
-                cursor: "pointer"
-            },
-            listeners: [{
-                type: "change",
-                listener: async (e: Event) => {
-                    const mode = (e.target as HTMLSelectElement).value as 'lock' | 'default' | 'explore';
-                    stateManager.setOptions({ selectionMode: mode });
-                    // If switching to default or explore mode, auto-add current item
-                    if (mode !== 'lock' && currentItem) {
-                        if (mode === 'default') {
-                            stateManager.clearAll();
-                        }
-                        await this.addItemWithNotes(currentItem);
-                    }
-                }
-            }]
-        }) as HTMLSelectElement;
-
-        // Populate mode options
-        const currentMode = stateManager.getOptions().selectionMode;
-        const modes = [
-            { value: 'lock', label: '🔒 Lock', title: 'No items added automatically' },
-            { value: 'default', label: '📌 Focus', title: 'Single item focus (switches)' },
-            { value: 'explore', label: '📚 Explore', title: 'Add multiple items' }
-        ];
-        modes.forEach(m => {
-            const opt = doc.createElement("option");
-            opt.value = m.value;
-            opt.textContent = m.label;
-            opt.title = m.title;
-            if (m.value === currentMode) opt.selected = true;
-            modeSelect.appendChild(opt);
-        });
-
-        modeContainer.appendChild(modeLabel);
-        modeContainer.appendChild(modeSelect);
-
-        leftControls.appendChild(modelSelect);
-        leftControls.appendChild(modeContainer);
-
-        // Web Search Toggle (only if Firecrawl is configured)
-        if (firecrawlService.isConfigured()) {
-            const options = stateManager.getOptions();
-
-            // Container for web search controls
-            const webSearchContainer = ztoolkit.UI.createElement(doc, "div", {
-                styles: { display: "flex", alignItems: "center", gap: "4px", marginLeft: "8px", position: "relative" }
-            });
-
-            const webSearchBtn = ztoolkit.UI.createElement(doc, "button", {
-                properties: {
-                    innerText: options.webSearchEnabled ? "🌐 Web ON" : "🌐 Web",
-                    id: "web-search-toggle",
-                    title: "Toggle web search - enriches AI responses with real-time web context"
-                },
-                styles: {
-                    padding: "4px 10px",
-                    fontSize: "11px",
-                    border: options.webSearchEnabled
-                        ? "1px solid #e65100"
-                        : "1px solid var(--border-primary)",
-                    borderRadius: "4px 0 0 4px",
-                    backgroundColor: options.webSearchEnabled
-                        ? "#6d4d00"
-                        : "var(--background-secondary)",
-                    color: options.webSearchEnabled
-                        ? "#ffc94d"
-                        : "var(--text-primary)",
-                    fontWeight: options.webSearchEnabled ? "bold" : "normal",
-                    cursor: "pointer",
-                    transition: "all 0.2s ease"
-                },
-                listeners: [{
-                    type: "click",
-                    listener: () => {
-                        const current = stateManager.getOptions();
-                        const newValue = !current.webSearchEnabled;
-                        stateManager.setOptions({ webSearchEnabled: newValue });
-
-                        // Update button appearance
-                        (webSearchBtn as HTMLElement).innerText = newValue ? "🌐 Web ON" : "🌐 Web";
-                        (webSearchBtn as HTMLElement).style.backgroundColor = newValue
-                            ? "#6d4d00"
-                            : "var(--background-secondary)";
-                        (webSearchBtn as HTMLElement).style.color = newValue
-                            ? "#ffc94d"
-                            : "var(--text-primary)";
-                        (webSearchBtn as HTMLElement).style.borderColor = newValue
-                            ? "#e65100"
-                            : "var(--border-primary)";
-                        (webSearchBtn as HTMLElement).style.fontWeight = newValue
-                            ? "bold"
-                            : "normal";
-
-                        Zotero.debug(`[seerai] Web search toggled: ${newValue}`);
-                    }
-                }]
-            });
-
-            // Settings gear button
-            const webSettingsBtn = ztoolkit.UI.createElement(doc, "button", {
-                properties: {
-                    innerText: "⚙",
-                    id: "web-search-settings",
-                    title: "Firecrawl settings"
-                },
-                styles: {
-                    padding: "4px 6px",
-                    fontSize: "11px",
-                    border: "1px solid var(--border-primary)",
-                    borderLeft: "none",
-                    borderRadius: "0 4px 4px 0",
-                    backgroundColor: "var(--background-secondary)",
-                    color: "var(--text-primary)",
-                    cursor: "pointer"
-                },
-                listeners: [{
-                    type: "click",
-                    listener: (e: Event) => {
-                        e.stopPropagation();
-                        this.showFirecrawlSettingsPopover(webSearchContainer, doc);
-                    }
-                }]
-            });
-
-            webSearchContainer.appendChild(webSearchBtn);
-            webSearchContainer.appendChild(webSettingsBtn);
-            leftControls.appendChild(webSearchContainer);
-        }
-
-        // Right side removed (moved to input area)
-        return controlsBar;
-    }
+    // Controls bar removed (migrated to Chat Settings) 
 
     /**
      * Populate model selector with configured models
@@ -12606,6 +12414,59 @@ ${tableRows}  </tbody>
             }]
         });
 
+
+
+        // Settings / Config button
+        const settingsBtn = ztoolkit.UI.createElement(doc, "button", {
+            properties: { innerText: "⚙️", title: "Chat Settings (Model, Mode, Web Search)" },
+            styles: {
+                width: "32px",
+                height: "32px",
+                border: "1px solid var(--border-primary)",
+                borderRadius: "6px",
+                backgroundColor: "var(--background-primary)",
+                color: "var(--text-secondary)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "14px",
+                transition: "all 0.15s ease",
+            },
+            listeners: [{
+                type: "click",
+                listener: () => {
+                    showChatSettings(doc, settingsBtn as HTMLElement, {
+                        onModeChange: async (mode) => {
+                            // If switching to default or explore mode, auto-add current item
+                            if (mode !== 'lock' && currentItem) {
+                                if (mode === 'default') {
+                                    stateManager.clearAll();
+                                }
+                                await this.addItemWithNotes(currentItem);
+                            }
+                        }
+                    });
+                }
+            }, {
+                type: "mouseenter",
+                listener: () => {
+                    (settingsBtn as HTMLElement).style.backgroundColor = "var(--background-secondary)";
+                    (settingsBtn as HTMLElement).style.borderColor = "var(--border-secondary)";
+                }
+            }, {
+                type: "mouseleave",
+                listener: () => {
+                    (settingsBtn as HTMLElement).style.backgroundColor = "var(--background-primary)";
+                    (settingsBtn as HTMLElement).style.borderColor = "var(--border-primary)";
+                }
+            }]
+        });
+
+        const settingsContainer = doc.createElement('div');
+        settingsContainer.style.cssText = 'position: relative; margin-right: 4px;';
+        settingsContainer.appendChild(settingsBtn);
+
         // Prompt Library button
         const promptsBtn = ztoolkit.UI.createElement(doc, "button", {
             properties: { innerText: "📚", title: "Prompt Library" },
@@ -12658,6 +12519,10 @@ ${tableRows}  </tbody>
             }]
         });
 
+        const promptsContainer = doc.createElement('div');
+        promptsContainer.style.cssText = 'position: relative;';
+        promptsContainer.appendChild(promptsBtn);
+
         // Placeholder menu button (for manually inserting placeholders)
         const placeholderBtn = createPlaceholderMenuButton(doc, input);
 
@@ -12680,7 +12545,8 @@ ${tableRows}  </tbody>
             input.value = cleanedValue;
         });
 
-        inputArea.appendChild(promptsBtn);
+        inputArea.appendChild(settingsContainer);
+        inputArea.appendChild(promptsContainer);
         inputArea.appendChild(placeholderBtn);
         inputArea.appendChild(input);
         inputArea.appendChild(sendBtn);
