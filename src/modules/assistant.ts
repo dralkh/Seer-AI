@@ -17189,4 +17189,106 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
       Zotero.debug(`[seerai] Failed to save note: ${error}`);
     }
   }
+
+  /**
+   * Check if an item is in the current table
+   */
+  static isItemInCurrentTable(itemId: number): boolean {
+    return currentTableConfig?.addedPaperIds.includes(itemId) || false;
+  }
+
+  /**
+   * Add items to the currently active table (if any)
+   */
+  static async addItemsToCurrentTable(items: Zotero.Item[]): Promise<void> {
+    if (!currentTableConfig) {
+      new ztoolkit.ProgressWindow("DataLab")
+        .createLine({
+          text: "No active table found. Please open the Assistant Table tab first.",
+          progress: 100,
+          icon: "warning",
+        })
+        .show();
+      return;
+    }
+
+    const newIds = items
+      .filter((item) => item.isRegularItem())
+      .map((item) => item.id)
+      .filter((id) => !currentTableConfig!.addedPaperIds.includes(id));
+
+    if (newIds.length === 0) {
+      new ztoolkit.ProgressWindow("DataLab")
+        .createLine({
+          text: "Selected items are already in the table.",
+          progress: 100,
+        })
+        .show();
+      return;
+    }
+
+    currentTableConfig.addedPaperIds.push(...newIds);
+    const tableStore = getTableStore();
+    await tableStore.saveConfig(currentTableConfig);
+
+    // Refresh if visible
+    if (activeTab === "table" && currentContainer && currentItem) {
+      this.renderInterface(currentContainer, currentItem);
+    }
+
+    new ztoolkit.ProgressWindow("DataLab")
+      .createLine({
+        text: `Added ${newIds.length} items to table`,
+        progress: 100,
+      })
+      .show();
+  }
+
+  /**
+   * Remove items from the currently active table (if present)
+   */
+  static async removeItemsFromCurrentTable(
+    items: Zotero.Item[],
+  ): Promise<void> {
+    if (!currentTableConfig) return;
+
+    const idsToRemove = items.map((item) => item.id);
+    const initialLength = currentTableConfig.addedPaperIds.length;
+
+    currentTableConfig.addedPaperIds = currentTableConfig.addedPaperIds.filter(
+      (id) => !idsToRemove.includes(id),
+    );
+
+    if (currentTableConfig.addedPaperIds.length === initialLength) {
+      new ztoolkit.ProgressWindow("DataLab")
+        .createLine({
+          text: "Selected items are not in the table.",
+          progress: 100,
+        })
+        .show();
+      return;
+    }
+
+    // Cleanup generated data
+    idsToRemove.forEach((id) => {
+      if (currentTableConfig!.generatedData?.[id]) {
+        delete currentTableConfig!.generatedData![id];
+      }
+    });
+
+    const tableStore = getTableStore();
+    await tableStore.saveConfig(currentTableConfig);
+
+    // Refresh if visible
+    if (activeTab === "table" && currentContainer && currentItem) {
+      this.renderInterface(currentContainer, currentItem);
+    }
+
+    new ztoolkit.ProgressWindow("DataLab")
+      .createLine({
+        text: `Removed items from table`,
+        progress: 100,
+      })
+      .show();
+  }
 }

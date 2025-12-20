@@ -58,7 +58,9 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
 
     // Search all PDF menu item
     const searchPdfMenuId = "seerai-search-pdf";
-    let searchPdfMenu = win.document.getElementById(searchPdfMenuId) as XUL.MenuItem;
+    let searchPdfMenu = win.document.getElementById(
+      searchPdfMenuId,
+    ) as XUL.MenuItem;
     if (!searchPdfMenu) {
       searchPdfMenu = win.document.createXULElement("menuitem") as XUL.MenuItem;
       searchPdfMenu.setAttribute("id", searchPdfMenuId);
@@ -70,11 +72,53 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
       menu.appendChild(searchPdfMenu);
     }
 
+    // Add to Table menu item
+    const addToTableMenuId = "seerai-add-to-table";
+    let addToTableMenu = win.document.getElementById(
+      addToTableMenuId,
+    ) as XUL.MenuItem;
+    if (!addToTableMenu) {
+      addToTableMenu = win.document.createXULElement(
+        "menuitem",
+      ) as XUL.MenuItem;
+      addToTableMenu.setAttribute("id", addToTableMenuId);
+      addToTableMenu.setAttribute("label", "📅 Add to Table");
+      addToTableMenu.setAttribute("class", "menuitem-iconic");
+      addToTableMenu.addEventListener("command", async () => {
+        const items = Zotero.getActiveZoteroPane().getSelectedItems();
+        await Assistant.addItemsToCurrentTable(items);
+      });
+      menu.appendChild(addToTableMenu);
+    }
+
+    // Remove from Table menu item
+    const removeFromTableMenuId = "seerai-remove-from-table";
+    let removeFromTableMenu = win.document.getElementById(
+      removeFromTableMenuId,
+    ) as XUL.MenuItem;
+    if (!removeFromTableMenu) {
+      removeFromTableMenu = win.document.createXULElement(
+        "menuitem",
+      ) as XUL.MenuItem;
+      removeFromTableMenu.setAttribute("id", removeFromTableMenuId);
+      removeFromTableMenu.setAttribute("label", "🔴 Remove from Tables");
+      removeFromTableMenu.setAttribute("class", "menuitem-iconic");
+      removeFromTableMenu.addEventListener("command", async () => {
+        const items = Zotero.getActiveZoteroPane().getSelectedItems();
+        await Assistant.removeItemsFromCurrentTable(items);
+      });
+      menu.appendChild(removeFromTableMenu);
+    }
+
     // Handle visibility
     menu.addEventListener("popupshowing", () => {
       const items = Zotero.getActiveZoteroPane().getSelectedItems();
-      const hasPdf = items.some(item => {
-        if (item.isAttachment() && item.attachmentPath?.toLowerCase().endsWith(".pdf")) return true;
+      const hasPdf = items.some((item) => {
+        if (
+          item.isAttachment() &&
+          item.attachmentPath?.toLowerCase().endsWith(".pdf")
+        )
+          return true;
         if (item.isRegularItem()) {
           const pdf = ocrService.getFirstPdfAttachment(item);
           return pdf !== null;
@@ -84,24 +128,36 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
       menuItem.hidden = !hasPdf;
 
       // Show search PDF menu for items without PDF but with identifiers or title
-      const hasItemsWithoutPdf = items.some(item => {
+      const hasItemsWithoutPdf = items.some((item) => {
         if (!item.isRegularItem()) return false;
         const attachments = item.getAttachments() || [];
         const hasPdfAttachment = attachments.some((attId: number) => {
           const att = Zotero.Items.get(attId);
-          return att && (att.attachmentContentType === 'application/pdf' ||
-            att.attachmentPath?.toLowerCase().endsWith('.pdf'));
+          return (
+            att &&
+            (att.attachmentContentType === "application/pdf" ||
+              att.attachmentPath?.toLowerCase().endsWith(".pdf"))
+          );
         });
         if (hasPdfAttachment) return false;
         // Check for title (for SS title search + Firecrawl) OR identifiers
-        const title = item.getField('title');
-        const doi = item.getField('DOI');
-        const extra = item.getField('extra') as string || '';
+        const title = item.getField("title");
+        const doi = item.getField("DOI");
+        const extra = (item.getField("extra") as string) || "";
         const hasArxiv = /arxiv:/i.test(extra);
         const hasPmid = /pmid:/i.test(extra);
         return !!(title || doi || hasArxiv || hasPmid);
       });
       searchPdfMenu.hidden = !hasItemsWithoutPdf;
+
+      // Table Actions Visibility
+      const isRegularSelection = items.some((item) => item.isRegularItem());
+      addToTableMenu.hidden = !isRegularSelection;
+
+      const anyInTable = items.some((item) =>
+        Assistant.isItemInCurrentTable(item.id),
+      );
+      removeFromTableMenu.hidden = !isRegularSelection || !anyInTable;
     });
   }
 
@@ -112,10 +168,15 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
     const buttonId = "seerai-process-all-btn";
     let button = win.document.getElementById(buttonId) as XUL.ToolBarButton;
     if (!button) {
-      button = win.document.createXULElement("toolbarbutton") as XUL.ToolBarButton;
+      button = win.document.createXULElement(
+        "toolbarbutton",
+      ) as XUL.ToolBarButton;
       button.setAttribute("id", buttonId);
       button.setAttribute("label", "Process All PDFs");
-      button.setAttribute("tooltiptext", "Extract text from all unprocessed PDFs in this library");
+      button.setAttribute(
+        "tooltiptext",
+        "Extract text from all unprocessed PDFs in this library",
+      );
       button.addEventListener("command", async () => {
         await processAllLibraryItems();
       });
@@ -139,7 +200,10 @@ async function processSelectedItems() {
     let parentItem: Zotero.Item | null = null;
     let parentId: number | null = null;
 
-    if (item.isAttachment() && item.attachmentPath?.toLowerCase().endsWith(".pdf")) {
+    if (
+      item.isAttachment() &&
+      item.attachmentPath?.toLowerCase().endsWith(".pdf")
+    ) {
       // Get parent of PDF
       if (item.parentID) {
         parentId = item.parentID;
@@ -164,7 +228,9 @@ async function processSelectedItems() {
         if (pdf) {
           parentIdSet.add(parentId);
           parentItems.push(parentItem);
-          ztoolkit.log(`DataLab: Queued parent ${parentId} (${parentItem.getField("title")})`);
+          ztoolkit.log(
+            `DataLab: Queued parent ${parentId} (${parentItem.getField("title")})`,
+          );
         }
       } else {
         // Still add to set to prevent re-checking
@@ -178,10 +244,12 @@ async function processSelectedItems() {
 
   ztoolkit.log(`DataLab: ${parentItems.length} unique parents to process`);
   if (parentItems.length === 0) {
-    new ztoolkit.ProgressWindow("DataLab OCR").createLine({
-      text: "No unprocessed items to extract.",
-      progress: 100
-    }).show();
+    new ztoolkit.ProgressWindow("DataLab OCR")
+      .createLine({
+        text: "No unprocessed items to extract.",
+        progress: 100,
+      })
+      .show();
     return;
   }
 
@@ -205,14 +273,17 @@ async function searchPdfsForSelectedItems() {
     const attachments = item.getAttachments() || [];
     const hasPdf = attachments.some((attId: number) => {
       const att = Zotero.Items.get(attId);
-      return att && (att.attachmentContentType === 'application/pdf' ||
-        att.attachmentPath?.toLowerCase().endsWith('.pdf'));
+      return (
+        att &&
+        (att.attachmentContentType === "application/pdf" ||
+          att.attachmentPath?.toLowerCase().endsWith(".pdf"))
+      );
     });
 
     if (!hasPdf) {
       // Check for identifiers
-      const doi = item.getField('DOI');
-      const extra = item.getField('extra') as string || '';
+      const doi = item.getField("DOI");
+      const extra = (item.getField("extra") as string) || "";
       const hasArxiv = /arxiv:/i.test(extra);
       const hasPmid = /pmid:/i.test(extra);
       if (doi || hasArxiv || hasPmid) {
@@ -235,7 +306,9 @@ async function searchPdfsForSelectedItems() {
   let found = 0;
   for (let i = 0; i < itemsToSearch.length; i++) {
     const item = itemsToSearch[i];
-    ztoolkit.log(`Search PDF: ${i + 1}/${itemsToSearch.length} - ${item.getField('title')}`);
+    ztoolkit.log(
+      `Search PDF: ${i + 1}/${itemsToSearch.length} - ${item.getField("title")}`,
+    );
 
     try {
       const success = await findAndAttachPdfForItem(item);
@@ -257,7 +330,7 @@ async function processAllLibraryItems() {
 
   // Get all regular items in the library
   // @ts-ignore
-  const allItems = await Zotero.Items.getAll(libraryID) as Zotero.Item[];
+  const allItems = (await Zotero.Items.getAll(libraryID)) as Zotero.Item[];
   const parentItems: Zotero.Item[] = [];
 
   for (const item of allItems) {
@@ -270,17 +343,23 @@ async function processAllLibraryItems() {
     }
   }
 
-  ztoolkit.log(`DataLab: Found ${parentItems.length} items to process in library`);
+  ztoolkit.log(
+    `DataLab: Found ${parentItems.length} items to process in library`,
+  );
   if (parentItems.length === 0) {
-    new ztoolkit.ProgressWindow("DataLab OCR").createLine({
-      text: "No unprocessed items found in library.",
-      progress: 100
-    }).show();
+    new ztoolkit.ProgressWindow("DataLab OCR")
+      .createLine({
+        text: "No unprocessed items found in library.",
+        progress: 100,
+      })
+      .show();
     return;
   }
 
   // Confirm with user
-  const proceed = Zotero.getMainWindow().confirm(`Process ${parentItems.length} items? This may take a while.`);
+  const proceed = Zotero.getMainWindow().confirm(
+    `Process ${parentItems.length} items? This may take a while.`,
+  );
   if (!proceed) return;
 
   await processParentItemsInBatches(parentItems);
@@ -290,23 +369,31 @@ async function processAllLibraryItems() {
  * Process parent items in parallel batches.
  */
 async function processParentItemsInBatches(parentItems: Zotero.Item[]) {
-  const maxConcurrent = (Zotero.Prefs.get(`${addon.data.config.prefsPrefix}.datalabMaxConcurrent`) as number) || 5;
-  ztoolkit.log(`DataLab: Processing ${parentItems.length} items with max concurrent ${maxConcurrent}`);
+  const maxConcurrent =
+    (Zotero.Prefs.get(
+      `${addon.data.config.prefsPrefix}.datalabMaxConcurrent`,
+    ) as number) || 5;
+  ztoolkit.log(
+    `DataLab: Processing ${parentItems.length} items with max concurrent ${maxConcurrent}`,
+  );
 
   for (let i = 0; i < parentItems.length; i += maxConcurrent) {
     const batch = parentItems.slice(i, i + maxConcurrent);
-    ztoolkit.log(`DataLab: Processing batch ${Math.floor(i / maxConcurrent) + 1}`);
-    await Promise.all(batch.map(parent => {
-      const pdf = ocrService.getFirstPdfAttachment(parent);
-      if (pdf) {
-        return ocrService.convertToMarkdown(pdf);
-      }
-      return Promise.resolve();
-    }));
+    ztoolkit.log(
+      `DataLab: Processing batch ${Math.floor(i / maxConcurrent) + 1}`,
+    );
+    await Promise.all(
+      batch.map((parent) => {
+        const pdf = ocrService.getFirstPdfAttachment(parent);
+        if (pdf) {
+          return ocrService.convertToMarkdown(pdf);
+        }
+        return Promise.resolve();
+      }),
+    );
   }
   ztoolkit.log(`DataLab: All batches complete`);
 }
-
 
 async function onMainWindowUnload(win: Window): Promise<void> {
   addon.data.disconnectThemeObserver?.();
