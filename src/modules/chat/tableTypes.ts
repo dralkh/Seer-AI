@@ -178,6 +178,11 @@ export interface SearchState {
     sortBy: 'relevance' | 'citationCount:desc' | 'publicationDate:desc';
     // Save location: 'user' for user library, 'lib_ID' for group library, 'col_ID' for collection
     saveLocation: string;
+    // Cached AI insights for this search query
+    cachedAiInsights?: string;
+    // AI insights configuration
+    searchAiInsightsPrompt?: string;
+    searchAiInsightsResponseLength?: number;
 }
 
 export const defaultSearchState: SearchState = {
@@ -189,6 +194,16 @@ export const defaultSearchState: SearchState = {
     publicationTypes: [],
     sortBy: 'relevance',
     saveLocation: 'user', // Default to user library
+    searchAiInsightsPrompt: `You are an expert research analyst specializing in academic literature synthesis. Your role is to provide rigorous, insightful analysis of research papers.
+
+For the given search results:
+1. **Research Landscape**: Identify the key research themes, methodological approaches, and theoretical frameworks
+2. **Critical Analysis**: Highlight significant findings, notable gaps, and areas of consensus or controversy
+3. **Connections**: Draw connections between papers using citation format [N] to reference specific works
+4. **Implications**: Discuss practical implications and future research directions
+
+Format in clean Markdown with clear headings. Be analytical and substantive, not just descriptive. When referencing papers, use [N] format so readers can click to navigate.`,
+    searchAiInsightsResponseLength: 800,
 };
 
 // ==================== Search Analysis Column Types ====================

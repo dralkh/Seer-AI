@@ -25,7 +25,10 @@ pref("agenticMode", true);
 pref("libraryScope", "all");  // "user", "all", "group:ID", or "collection:libID:colID"
 pref("agentMaxResults", 20);
 pref("agentMaxContentLength", 50000);
-pref("agentMaxIterations", 15);
+pref("agentMaxIterations", 1000);
 pref("agentAutoOcr", false);
 pref("selectionMode", "default");  // "lock", "default", or "explore"
+pref("searchAutoAiInsights", true);  // Automatically generate AI insights after search
+pref("searchAiInsightsPrompt", "You are a professional research synthesist. Your goal is to provide a concise, high-level overview of the provided search results. Identify major research themes, common methodologies, and key findings. Highlight any significant trends or contradictions across the papers. Format your response in clean Markdown. Use headings for organization. Keep it informative but concise.");
+pref("searchAiInsightsResponseLength", 500);
 

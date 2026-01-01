@@ -279,7 +279,7 @@ export async function executeImportPaper(
     _config: AgentConfig
 ): Promise<ToolResult> {
     try {
-        const { paper_id, target_collection_id, trigger_ocr } = params;
+        const { paper_id, target_collection_id, trigger_ocr, wait_for_pdf } = params;
 
         Zotero.debug(`[seerai] Tool: import_paper id=${paper_id} target_col=${target_collection_id} trigger_ocr=${trigger_ocr}`);
 
@@ -292,50 +292,20 @@ export async function executeImportPaper(
             };
         }
 
-        // 2. Import using Assistant's logic (without collection - we'll add it directly)
-        const result = await Assistant.addPaperToZoteroWithPdfDiscovery(paper);
+        // 2. Import using Assistant's logic (passing target_collection_id and wait_for_pdf)
+        const result = await Assistant.addPaperToZoteroWithPdfDiscovery(
+            paper,
+            undefined, // No status button
+            target_collection_id,
+            wait_for_pdf,
+            trigger_ocr || _config.autoOcr
+        );
 
         if (!result.item) {
             return {
                 success: false,
                 error: "Failed to create item in Zotero"
             };
-        }
-
-        // 3. Add to collection if specified (direct approach, more reliable than saveLocation state)
-        if (target_collection_id) {
-            try {
-                const collection = Zotero.Collections.get(target_collection_id);
-                if (collection) {
-                    Zotero.debug(`[seerai] Tool: import_paper - Found collection "${collection.name}" (ID: ${collection.id}), adding item ${result.item.id}`);
-                    result.item.addToCollection(target_collection_id);
-                    await result.item.saveTx();
-
-                    // Verify the item was actually added
-                    const itemCollections = result.item.getCollections();
-                    const wasAdded = itemCollections.includes(target_collection_id);
-                    Zotero.debug(`[seerai] Tool: import_paper - Item ${result.item.id} collections after save: [${itemCollections.join(', ')}], added to ${target_collection_id}: ${wasAdded}`);
-
-                    if (!wasAdded) {
-                        Zotero.debug(`[seerai] Tool: import_paper - WARNING: Item may not have been added to collection properly`);
-                    }
-                } else {
-                    Zotero.debug(`[seerai] Tool: import_paper - Collection ${target_collection_id} not found! Cannot add item.`);
-                }
-            } catch (colError) {
-                Zotero.debug(`[seerai] Tool: import_paper - Error adding to collection: ${colError}`);
-            }
-        }
-
-        // 4. OCR if requested (explicitly or via global setting) and PDF attached
-        if ((trigger_ocr || _config.autoOcr) && result.item && result.pdfAttached) {
-            const zItem = result.item;
-            const ocrService = Assistant.getOcrService();
-            const pdf = ocrService.getFirstPdfAttachment(zItem);
-            if (pdf) {
-                Zotero.debug(`[seerai] Triggering immediate OCR for imported paper ${zItem.id}`);
-                await ocrService.convertToMarkdown(pdf, { showProgress: false });
-            }
         }
 
         const importResult: ImportPaperResult = {
@@ -348,7 +318,7 @@ export async function executeImportPaper(
         return {
             success: true,
             data: importResult,
-            summary: `Successfully imported "${paper.title}" to Zotero (ID: ${result.item.id})${target_collection_id ? ` in collection ${target_collection_id}` : ''}. PDF attached: ${result.pdfAttached}`
+            summary: `Successfully started import for "${paper.title}" to Zotero (ID: ${result.item.id})${target_collection_id ? ` in collection ${target_collection_id}` : ''}.${wait_for_pdf ? ` PDF discovery: ${result.pdfAttached}` : ' PDF discovery running in background.'}`
         };
 
     } catch (error) {

@@ -36,6 +36,9 @@ declare namespace _ZoteroTypes {
       "agentMaxIterations": number;
       "agentAutoOcr": boolean;
       "selectionMode": string;
+      "searchAutoAiInsights": boolean;
+      "searchAiInsightsPrompt": string;
+      "searchAiInsightsResponseLength": number;
     };
   }
 }

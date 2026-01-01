@@ -786,6 +786,26 @@ async function deleteSearchHistoryEntry(id: string): Promise<void> {
   Zotero.debug(`[seerai] Deleted search history entry: ${id}`);
 }
 
+/**
+ * Update the most recent history entry for a query with AI insights
+ */
+async function updateSearchHistoryWithInsights(
+  query: string,
+  insights: string,
+): Promise<void> {
+  const history = await getSearchHistory();
+  const entry = history.find(
+    (h) => h.query.toLowerCase() === query.toLowerCase(),
+  );
+  if (entry) {
+    entry.state.cachedAiInsights = insights;
+    await saveSearchHistory(history);
+    Zotero.debug(
+      `[seerai] Updated search history entry with AI insights: "${query}"`,
+    );
+  }
+}
+
 // ==================== Search Column Configuration Persistence ====================
 
 function getSearchColumnConfigPath(): string {
@@ -3138,7 +3158,49 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     });
     presetRow.appendChild(deleteBtn);
 
+    // Toggle button for advanced filters
+    const toggleBtn = ztoolkit.UI.createElement(doc, "button", {
+      properties: { innerText: "⚙️ Advanced" },
+      attributes: { title: "Show/hide advanced filters" },
+      styles: {
+        padding: "4px 10px",
+        border: "1px solid var(--border-primary)",
+        borderRadius: "4px",
+        fontSize: "11px",
+        backgroundColor: "var(--background-secondary)",
+        color: "var(--text-primary)",
+        cursor: "pointer",
+        marginLeft: "4px",
+        display: "flex",
+        alignItems: "center",
+        gap: "4px",
+      },
+    });
+    presetRow.appendChild(toggleBtn);
+
     filtersBody.appendChild(presetRow);
+
+    // Collapsible container for advanced filters
+    const advancedFiltersContainer = ztoolkit.UI.createElement(doc, "div", {
+      properties: { id: "advanced-search-filters" },
+      styles: {
+        display: "none", // Hidden by default
+        borderTop: "1px solid var(--border-primary)",
+        marginTop: "8px",
+        paddingTop: "8px",
+      },
+    });
+
+    toggleBtn.addEventListener("click", () => {
+      const isHidden = advancedFiltersContainer.style.display === "none";
+      advancedFiltersContainer.style.display = isHidden ? "block" : "none";
+      toggleBtn.style.backgroundColor = isHidden
+        ? "var(--highlight-primary)"
+        : "var(--background-secondary)";
+      toggleBtn.style.color = isHidden
+        ? "var(--highlight-text)"
+        : "var(--text-primary)";
+    });
 
     const gridStyle = {
       display: "grid",
@@ -3257,7 +3319,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     yearGroup.appendChild(yearInputs);
     row1.appendChild(yearGroup);
 
-    filtersBody.appendChild(row1);
+    advancedFiltersContainer.appendChild(row1);
 
     // Row 2: Checkboxes (Has PDF, Hide Library Duplicates)
     const row2 = ztoolkit.UI.createElement(doc, "div", {
@@ -3284,7 +3346,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     );
     row2.appendChild(hideDupsCheck);
 
-    filtersBody.appendChild(row2);
+    advancedFiltersContainer.appendChild(row2);
 
     // Row 3: Min Citations + Sort By
     const row3 = ztoolkit.UI.createElement(doc, "div", { styles: gridStyle });
@@ -3351,7 +3413,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     sortGroup.appendChild(sortSelect);
     row3.appendChild(sortGroup);
 
-    filtersBody.appendChild(row3);
+    advancedFiltersContainer.appendChild(row3);
 
     // Row 4: Fields of Study multi-select
     const fosGroup = ztoolkit.UI.createElement(doc, "div", {
@@ -3418,7 +3480,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
 
     fosGroup.appendChild(fosLabel);
     fosGroup.appendChild(fosContainer);
-    filtersBody.appendChild(fosGroup);
+    advancedFiltersContainer.appendChild(fosGroup);
 
     // Row 5: Publication Types
     const pubTypeGroup = ztoolkit.UI.createElement(doc, "div", {
@@ -3484,7 +3546,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
 
     pubTypeGroup.appendChild(pubTypeLabel);
     pubTypeGroup.appendChild(pubTypeContainer);
-    filtersBody.appendChild(pubTypeGroup);
+    advancedFiltersContainer.appendChild(pubTypeGroup);
 
     // Row 6: Venue filter
     const venueGroup = ztoolkit.UI.createElement(doc, "div", {
@@ -3513,7 +3575,7 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     }) as HTMLInputElement;
     venueGroup.appendChild(venueLabel);
     venueGroup.appendChild(venueInput);
-    filtersBody.appendChild(venueGroup);
+    advancedFiltersContainer.appendChild(venueGroup);
 
     // Row 7: Save Location dropdown
     const saveLocationGroup = ztoolkit.UI.createElement(doc, "div", {
@@ -3554,9 +3616,124 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     // Populate save location dropdown with libraries and collections
     this.populateSaveLocationSelect(saveLocationSelect);
 
-    saveLocationGroup.appendChild(saveLocationLabel);
     saveLocationGroup.appendChild(saveLocationSelect);
-    filtersBody.appendChild(saveLocationGroup);
+    advancedFiltersContainer.appendChild(saveLocationGroup);
+
+    // Row 8: AI Insights Section (Directly Visible)
+    const insightsHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: {
+        marginTop: "12px",
+        paddingTop: "12px",
+        borderTop: "1px solid var(--border-primary)",
+        marginBottom: "8px",
+        fontSize: "11px",
+        fontWeight: "600",
+        color: "var(--text-primary)",
+        display: "flex",
+        alignItems: "center",
+        gap: "6px",
+      },
+    });
+    insightsHeader.innerHTML = "<span>💡</span><span>AI Insights Configuration</span>";
+    advancedFiltersContainer.appendChild(insightsHeader);
+
+    const insightsSection = ztoolkit.UI.createElement(doc, "div", {
+      styles: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: "8px",
+        backgroundColor: "var(--background-secondary)",
+        borderRadius: "6px",
+      },
+    });
+
+    // Auto Insights Toggle
+    const autoInsightsToggle = this.createFilterCheckbox(
+      doc,
+      "Enable Auto AI Insights",
+      Zotero.Prefs.get("extensions.seerai.searchAutoAiInsights") !== false,
+      (val) => {
+        Zotero.Prefs.set("extensions.seerai.searchAutoAiInsights", val);
+      },
+    );
+    insightsSection.appendChild(autoInsightsToggle);
+
+    // Prompt configuration
+    const promptContainer = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", flexDirection: "column", gap: "4px" },
+    });
+    const promptLabel = ztoolkit.UI.createElement(doc, "label", {
+      properties: { innerText: "Synthesis System Prompt:" },
+      styles: labelStyle,
+    });
+    const promptArea = ztoolkit.UI.createElement(doc, "textarea", {
+      properties: {
+        value:
+          currentSearchState.searchAiInsightsPrompt ||
+          (Zotero.Prefs.get("extensions.seerai.searchAiInsightsPrompt") as string),
+        rows: 4,
+      },
+      styles: {
+        ...inputStyle,
+        width: "100%",
+        minHeight: "80px",
+        fontFamily: "inherit",
+        resize: "both",
+        boxSizing: "border-box",
+      },
+    }) as HTMLTextAreaElement;
+    promptArea.addEventListener("change", () => {
+      currentSearchState.searchAiInsightsPrompt = promptArea.value;
+      Zotero.Prefs.set("extensions.seerai.searchAiInsightsPrompt", promptArea.value);
+    });
+    promptContainer.appendChild(promptLabel);
+    promptContainer.appendChild(promptArea);
+    insightsSection.appendChild(promptContainer);
+
+    // Length configuration with slider
+    const lengthGroup = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" },
+    });
+    const lengthLabel = ztoolkit.UI.createElement(doc, "label", {
+      properties: { innerText: "Response length:" },
+      styles: { ...labelStyle, marginBottom: "0" },
+    });
+    const currentLength = currentSearchState.searchAiInsightsResponseLength ||
+      (Zotero.Prefs.get("extensions.seerai.searchAiInsightsResponseLength") as number) || 500;
+
+    const lengthValue = ztoolkit.UI.createElement(doc, "span", {
+      properties: { innerText: `${currentLength} chars` },
+      styles: { fontSize: "11px", color: "var(--text-secondary)", minWidth: "70px" },
+    });
+    const lengthSlider = ztoolkit.UI.createElement(doc, "input", {
+      attributes: {
+        type: "range",
+        min: "100",
+        max: "2000",
+        step: "100",
+        value: String(currentLength),
+      },
+      styles: { flex: "1", minWidth: "100px", cursor: "pointer" },
+    }) as HTMLInputElement;
+    lengthSlider.addEventListener("input", () => {
+      const val = parseInt(lengthSlider.value, 10);
+      lengthValue.innerText = `${val} chars`;
+    });
+    lengthSlider.addEventListener("change", () => {
+      const val = parseInt(lengthSlider.value, 10);
+      currentSearchState.searchAiInsightsResponseLength = val;
+      Zotero.Prefs.set("extensions.seerai.searchAiInsightsResponseLength", val);
+    });
+
+    lengthGroup.appendChild(lengthLabel);
+    lengthGroup.appendChild(lengthSlider);
+    lengthGroup.appendChild(lengthValue);
+    insightsSection.appendChild(lengthGroup);
+
+    advancedFiltersContainer.appendChild(insightsSection);
+
+    filtersBody.appendChild(advancedFiltersContainer);
 
     container.appendChild(filtersBody);
     return container;
@@ -3627,6 +3804,8 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
       // so we don't need to do anything else here
     } else {
       // For fresh searches: clear and show loading
+      // Clear cached AI insights for new query
+      currentSearchState.cachedAiInsights = undefined;
       resultsArea.innerHTML = "";
       const loadingEl = ztoolkit.UI.createElement(doc, "div", {
         properties: { id: "initial-search-loading" },
@@ -3670,15 +3849,28 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         venue: currentSearchState.venue,
       });
 
+      Zotero.debug(`[seerai] Search response - total: ${result.total}, data length: ${result.data?.length ?? 'undefined'}`);
+
+      // Defensive check: ensure result.data exists and is an array
+      if (!result.data || !Array.isArray(result.data)) {
+        Zotero.debug(`[seerai] Invalid search response - data is ${typeof result.data}`);
+        throw new Error("Invalid search response from API - no results data");
+      }
+
       // Capture total count from result
       if (currentSearchResults.length === 0) {
-        totalSearchResults = result.total;
+        totalSearchResults = result.total || 0;
       }
 
       // Filter library duplicates if enabled
       let papers = result.data;
-      if (currentSearchState.hideLibraryDuplicates) {
+      const papersBeforeFilter = papers.length;
+      if (currentSearchState.hideLibraryDuplicates && papers.length > 0) {
         papers = await this.filterLibraryDuplicates(papers);
+        const filtered = papersBeforeFilter - papers.length;
+        if (filtered > 0) {
+          Zotero.debug(`[seerai] Duplicate filter: ${papersBeforeFilter} → ${papers.length} (removed ${filtered} already in library)`);
+        }
       }
 
       const previousCount = currentSearchResults.length;
@@ -3885,8 +4077,14 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
     });
 
     const countText = ztoolkit.UI.createElement(doc, "span", {});
-    countText.innerHTML = `📊 Found <strong>${totalSearchResults.toLocaleString()}</strong> papers • Showing ${currentSearchResults.length}`;
+    const filterNote = currentSearchState.hideLibraryDuplicates ? " (hiding library duplicates)" : "";
+    countText.innerHTML = `📊 Found <strong>${totalSearchResults.toLocaleString()}</strong> papers • Showing ${currentSearchResults.length}${filterNote}`;
     countHeader.appendChild(countText);
+
+    const headerButtons = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", gap: "8px" },
+    });
+
 
     // Export BibTeX button (Keep only this button in header)
     const exportBtn = ztoolkit.UI.createElement(doc, "button", {
@@ -3927,12 +4125,312 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         },
       ],
     });
-    countHeader.appendChild(exportBtn);
+    headerButtons.appendChild(exportBtn);
+    countHeader.appendChild(headerButtons);
     container.appendChild(countHeader);
+
+    // AI Insights Container
+    const summaryContainer = ztoolkit.UI.createElement(doc, "div", {
+      properties: { id: "search-ai-summary-container" },
+      styles: {
+        display: "none",
+        padding: "16px",
+        margin: "12px",
+        backgroundColor: "var(--background-primary)",
+        border: "1px solid var(--border-primary)",
+        borderRadius: "8px",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+        maxHeight: "350px",
+        overflowY: "auto",
+        position: "relative",
+      },
+    });
+    container.appendChild(summaryContainer);
 
     // Render Unified Search Results (Table Layout with Card First Column)
     const wrapper = this.renderUnifiedSearchResults(doc, container, item);
     container.appendChild(wrapper);
+
+    // Auto-generate AI insights if enabled in settings
+    const autoInsights = Zotero.Prefs.get("extensions.seerai.searchAutoAiInsights") as boolean;
+
+    // Check for cached insights first
+    if (currentSearchState.cachedAiInsights) {
+      // Display cached insights immediately
+      this.displayCachedInsights(doc, currentSearchState.cachedAiInsights);
+    } else if (autoInsights !== false) {
+      // Run asynchronously without blocking the render
+      this.generateSearchInsights(doc, container).catch((err) =>
+        Zotero.debug(`[seerai] Auto AI insights error: ${err}`),
+      );
+    }
+  }
+
+  /**
+   * Generate AI insights for current search results
+   */
+  private static async generateSearchInsights(
+    doc: Document,
+    container: HTMLElement,
+  ): Promise<void> {
+    const summaryContainer = doc.getElementById(
+      "search-ai-summary-container",
+    ) as HTMLElement;
+    if (!summaryContainer) return;
+
+    if (currentSearchResults.length === 0) {
+      summaryContainer.style.display = "none";
+      return;
+    }
+
+    // Show loading
+    summaryContainer.style.display = "block";
+    summaryContainer.innerHTML = `<div style="text-align: center; color: var(--text-secondary); padding: 20px;">⏳ Analyzing ${currentSearchResults.length} papers from results...</div>`;
+    summaryContainer.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    try {
+      const activeModel = getActiveModelConfig();
+      if (!activeModel) {
+        summaryContainer.innerHTML = `<div style="color: var(--error-color, #d32f2f); padding: 10px;">⚠️ No AI model configured. Please add a model in Settings.</div>`;
+        return;
+      }
+
+      // Prepare context: limited to top N papers if there are too many to avoid token limits
+      const topPapers = currentSearchResults.slice(0, 15);
+      const context = topPapers
+        .map((p, i) => {
+          return `[${i + 1}] Title: ${p.title}\nAbstract: ${p.abstract || "No abstract available"}`;
+        })
+        .join("\n\n");
+
+      const systemPrompt =
+        currentSearchState.searchAiInsightsPrompt ||
+        (Zotero.Prefs.get("extensions.seerai.searchAiInsightsPrompt") as string) ||
+        `You are an expert research analyst specializing in academic literature synthesis. Your role is to provide rigorous, insightful analysis of research papers.
+
+For the given search results:
+1. **Research Landscape**: Identify the key research themes, methodological approaches, and theoretical frameworks
+2. **Critical Analysis**: Highlight significant findings, notable gaps, and areas of consensus or controversy
+3. **Connections**: Draw connections between papers using citation format [N] to reference specific works
+4. **Implications**: Discuss practical implications and future research directions
+
+Format in clean Markdown with clear headings. Be analytical and substantive, not just descriptive. When referencing papers, use [N] format so readers can click to navigate.`;
+
+      const responseLength =
+        currentSearchState.searchAiInsightsResponseLength ||
+        (Zotero.Prefs.get("extensions.seerai.searchAiInsightsResponseLength") as number) ||
+        500;
+
+      const messages = [
+        { role: "system" as const, content: systemPrompt },
+        {
+          role: "user" as const,
+          content: `Analyze these ${topPapers.length} papers based on my search query "${currentSearchState.query}". Provide in-depth insights:\n\n${context}`,
+        },
+      ];
+
+      let fullSummary = "";
+      await openAIService.chatCompletionStream(
+        messages,
+        {
+          onToken: (token) => {
+            fullSummary += token;
+            summaryContainer.innerHTML = `
+                        <div style="font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-primary); padding-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 16px;">💡</span>
+                                <span>AI Insights Summary</span>
+                            </div>
+                            <span style="font-size: 11px; font-weight: 400; opacity: 0.6; font-style: italic;">AI is thinking...</span>
+                        </div>
+                        <div class="markdown-content" style="font-size: 13px; line-height: 1.6; color: var(--text-primary);">${parseMarkdown(fullSummary)}</div>
+                    `;
+          },
+          onComplete: (content) => {
+            fullSummary = content;
+            // Cache the insights for persistence
+            currentSearchState.cachedAiInsights = fullSummary;
+            // Also update the persisted search history entry
+            updateSearchHistoryWithInsights(
+              currentSearchState.query,
+              fullSummary,
+            );
+            summaryContainer.innerHTML = `
+                        <div style="font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-primary); padding-bottom: 8px;">
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <span style="font-size: 16px;">💡</span>
+                                <span>AI Insights Summary</span>
+                            </div>
+                            <div style="display: flex; gap: 6px;">
+                                <button id="copy-summary-btn" style="padding: 4px 10px; font-size: 11px; cursor: pointer; border-radius: 4px; border: 1px solid var(--border-primary); background: var(--background-primary); color: var(--text-primary); transition: all 0.2s;">📋 Copy</button>
+                                <button id="close-summary-btn" style="padding: 4px 10px; font-size: 11px; cursor: pointer; border-radius: 4px; border: 1px solid var(--border-primary); background: var(--background-primary); color: var(--text-primary); transition: all 0.2s;">✕ Close</button>
+                            </div>
+                        </div>
+                        <div class="markdown-content" style="font-size: 13px; line-height: 1.6; color: var(--text-primary);">${parseMarkdown(fullSummary)}</div>
+                    `;
+
+            // Hover effects for buttons
+            const btns = [
+              doc.getElementById("copy-summary-btn") as HTMLElement,
+              doc.getElementById("close-summary-btn") as HTMLElement,
+            ];
+            btns.forEach((btn) => {
+              if (btn) {
+                btn.addEventListener("mouseenter", () => {
+                  btn.style.backgroundColor = "var(--background-secondary)";
+                });
+                btn.addEventListener("mouseleave", () => {
+                  btn.style.backgroundColor = "var(--background-primary)";
+                });
+              }
+            });
+
+            // Click listeners
+            doc
+              .getElementById("copy-summary-btn")
+              ?.addEventListener("click", () => {
+                new ztoolkit.Clipboard()
+                  .addText(fullSummary, "text/unicode")
+                  .copy();
+                const btn = doc.getElementById(
+                  "copy-summary-btn",
+                ) as HTMLButtonElement;
+                btn.innerText = "✓ Copied!";
+                setTimeout(() => (btn.innerText = "📋 Copy"), 2000);
+              });
+
+            doc
+              .getElementById("close-summary-btn")
+              ?.addEventListener("click", () => {
+                summaryContainer.style.display = "none";
+              });
+
+            // Attach click handlers to citation links for navigation
+            this.attachCitationClickHandlers(doc, summaryContainer);
+          },
+          onError: (error) => {
+            Zotero.debug(`[seerai] Search insights error: ${error}`);
+            summaryContainer.innerHTML = `<div style="color: var(--error-color, #d32f2f); padding: 10px;">⚠️ AI Error: ${error.message}</div>`;
+          },
+        },
+        {
+          apiURL: activeModel.apiURL,
+          apiKey: activeModel.apiKey,
+          model: activeModel.model,
+        },
+      );
+    } catch (e) {
+      Zotero.debug(`[seerai] Failed to generate insights: ${e}`);
+      summaryContainer.innerHTML = `<div style="color: var(--error-color, #d32f2f); padding: 10px;">⚠️ Failed to generate insights: ${e}</div>`;
+    }
+  }
+
+  /**
+   * Display cached AI insights without regenerating
+   */
+  private static displayCachedInsights(doc: Document, cachedContent: string): void {
+    const summaryContainer = doc.getElementById(
+      "search-ai-summary-container",
+    ) as HTMLElement;
+    if (!summaryContainer) return;
+
+    summaryContainer.style.display = "block";
+    summaryContainer.innerHTML = `
+      <div style="font-weight: 600; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-primary); padding-bottom: 8px;">
+        <div style="display: flex; align-items: center; gap: 6px;">
+          <span style="font-size: 16px;">💡</span>
+          <span>AI Insights Summary</span>
+        </div>
+        <div style="display: flex; gap: 6px;">
+          <button id="copy-summary-btn" style="padding: 4px 10px; font-size: 11px; cursor: pointer; border-radius: 4px; border: 1px solid var(--border-primary); background: var(--background-primary); color: var(--text-primary); transition: all 0.2s;">📋 Copy</button>
+          <button id="close-summary-btn" style="padding: 4px 10px; font-size: 11px; cursor: pointer; border-radius: 4px; border: 1px solid var(--border-primary); background: var(--background-primary); color: var(--text-primary); transition: all 0.2s;">✕ Close</button>
+        </div>
+      </div>
+      <div class="markdown-content" style="font-size: 13px; line-height: 1.6; color: var(--text-primary);">${parseMarkdown(cachedContent)}</div>
+    `;
+
+    // Hover effects for buttons
+    const btns = [
+      doc.getElementById("copy-summary-btn") as HTMLElement,
+      doc.getElementById("close-summary-btn") as HTMLElement,
+    ];
+    btns.forEach((btn) => {
+      if (btn) {
+        btn.addEventListener("mouseenter", () => {
+          btn.style.backgroundColor = "var(--background-secondary)";
+        });
+        btn.addEventListener("mouseleave", () => {
+          btn.style.backgroundColor = "var(--background-primary)";
+        });
+      }
+    });
+
+    // Click listeners
+    doc
+      .getElementById("copy-summary-btn")
+      ?.addEventListener("click", () => {
+        new ztoolkit.Clipboard()
+          .addText(cachedContent, "text/unicode")
+          .copy();
+        const btn = doc.getElementById(
+          "copy-summary-btn",
+        ) as HTMLButtonElement;
+        btn.innerText = "✓ Copied!";
+        setTimeout(() => (btn.innerText = "📋 Copy"), 2000);
+      });
+
+    doc
+      .getElementById("close-summary-btn")
+      ?.addEventListener("click", () => {
+        summaryContainer.style.display = "none";
+      });
+
+    // Attach click handlers to citation links for navigation
+    this.attachCitationClickHandlers(doc, summaryContainer);
+  }
+
+  /**
+   * Scroll to and highlight a search result row by its index
+   * Used when clicking citation references in AI insights
+   */
+  private static scrollToSearchResult(doc: Document, index: number): void {
+    const rows = doc.querySelectorAll("tbody tr");
+    const targetRow = rows[index] as HTMLElement;
+    if (!targetRow) {
+      Zotero.debug(`[seerai] Citation link: Row ${index} not found`);
+      return;
+    }
+
+    // Scroll into view
+    targetRow.scrollIntoView({ behavior: "smooth", block: "center" });
+
+    // Highlight effect
+    const originalBg = targetRow.style.backgroundColor;
+    targetRow.style.backgroundColor = "var(--highlight-primary, #fff9c4)";
+    targetRow.style.transition = "background-color 0.5s ease-out";
+
+    setTimeout(() => {
+      targetRow.style.backgroundColor = originalBg;
+    }, 2000);
+
+    Zotero.debug(`[seerai] Citation link: Scrolled to paper at index ${index}`);
+  }
+
+  /**
+   * Attach click handlers to citation links in AI insights container
+   */
+  private static attachCitationClickHandlers(doc: Document, container: HTMLElement): void {
+    const citationLinks = container.querySelectorAll(".citation-link");
+    citationLinks.forEach((link: Element) => {
+      link.addEventListener("click", (e: Event) => {
+        e.stopPropagation();
+        const indexStr = (link as HTMLElement).dataset.citationIndex;
+        if (indexStr) {
+          const index = parseInt(indexStr, 10) - 1; // Convert from 1-indexed to 0-indexed
+          this.scrollToSearchResult(doc, index);
+        }
+      });
+    });
   }
 
   /**
@@ -5503,6 +6001,9 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
   public static async addPaperToZoteroWithPdfDiscovery(
     paper: SemanticScholarPaper,
     statusBtn?: HTMLButtonElement,
+    targetColId?: number,
+    waitForPdf: boolean = true,
+    triggerOcr: boolean = false,
   ): Promise<{
     item: Zotero.Item | null;
     pdfAttached: boolean;
@@ -5524,15 +6025,24 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         }
       }
 
-      // 1. Create the item
-      const newItem = new Zotero.Item(itemType);
-
-      // 2. Determine library ownership based on selected save location
+      // 1. Determine library ownership and collection
       const saveLocation = currentSearchState.saveLocation || "user";
       let targetLibraryId = Zotero.Libraries.userLibraryID;
-      let targetCollectionId: number | null = null;
+      let targetCollectionId: number | null = targetColId || null;
 
-      if (saveLocation === "user") {
+      // If a collection ID was explicitly provided, use its library
+      if (targetCollectionId) {
+        try {
+          const collection = Zotero.Collections.get(targetCollectionId);
+          if (collection) {
+            targetLibraryId = collection.libraryID;
+          }
+        } catch (e) {
+          Zotero.debug(
+            `[seerai] Error getting library for collection ${targetCollectionId}: ${e}`,
+          );
+        }
+      } else if (saveLocation === "user") {
         targetLibraryId = Zotero.Libraries.userLibraryID;
       } else if (saveLocation.startsWith("lib_")) {
         targetLibraryId = parseInt(saveLocation.replace("lib_", ""), 10);
@@ -5550,6 +6060,8 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         }
       }
 
+      // 2. Create the item
+      const newItem = new Zotero.Item(itemType);
       newItem.libraryID = targetLibraryId;
 
       // 3. Populate metadata fields
@@ -5609,54 +6121,73 @@ Output: "COVID-19"|"SARS-CoV-2"|coronavirus+vaccine|vaccination+effectiveness|ef
         }
       }
 
-      // 6. Run full PDF discovery pipeline (steps 1-6)
-      // Update status button if provided
+      // Helper for status updates
       const updateStatus = (text: string) => {
         if (statusBtn) {
           statusBtn.textContent = text;
         }
       };
 
-      let pdfAttached = false;
+      // 6. Define PDF discovery logic
+      const performDiscovery = async (): Promise<boolean> => {
+        let pdfAttached = false;
 
-      // If Semantic Scholar open access PDF is available, use it directly
-      if (paper.openAccessPdf?.url) {
-        updateStatus("📥 Attaching PDF...");
-        try {
-          await Zotero.Attachments.importFromURL({
-            url: paper.openAccessPdf.url,
-            parentItemID: newItem.id,
-            title: `${paper.title}.pdf`,
-            contentType: "application/pdf",
-          });
-          Zotero.debug(`[seerai] Semantic Scholar PDF attached`);
-          pdfAttached = true;
-        } catch (pdfError) {
-          Zotero.debug(`[seerai] SS PDF attach failed: ${pdfError}`);
+        // If Semantic Scholar open access PDF is available, use it directly
+        if (paper.openAccessPdf?.url) {
+          updateStatus("📥 Attaching PDF...");
+          try {
+            await Zotero.Attachments.importFromURL({
+              url: paper.openAccessPdf.url,
+              parentItemID: newItem.id,
+              title: `${paper.title}.pdf`,
+              contentType: "application/pdf",
+            });
+            Zotero.debug(`[seerai] Semantic Scholar PDF attached`);
+            pdfAttached = true;
+          } catch (pdfError) {
+            Zotero.debug(`[seerai] SS PDF attach failed: ${pdfError}`);
+          }
         }
+
+        // Run PDF discovery pipeline if no PDF attached yet
+        if (!pdfAttached) {
+          // Use unified PDF discovery pipeline
+          pdfAttached = await findAndAttachPdfForItem(newItem, updateStatus);
+        }
+
+        // Trigger OCR if requested and PDF attached
+        if (triggerOcr && pdfAttached) {
+          const ocrService = Assistant.getOcrService();
+          const pdf = ocrService.getFirstPdfAttachment(newItem);
+          if (pdf) {
+            Zotero.debug(
+              `[seerai] Triggering background OCR for imported paper ${newItem.id}`,
+            );
+            // We don't await this if it's already in a background task, 
+            // but if we are waiting for PDF, we might want to wait for OCR too?
+            // User said "until all series of import paper completed", which might include OCR.
+            // For now, let's await it so the agent knows when it's FULLY done if waitForPdf is true.
+            await ocrService.convertToMarkdown(pdf, { showProgress: false });
+          }
+        }
+
+        Zotero.debug(
+          `[seerai] Paper import discovery complete for ${newItem.id}, success: ${pdfAttached}`,
+        );
+        return pdfAttached;
+      };
+
+      // Handle backgrounding vs waiting
+      if (waitForPdf) {
+        const attached = await performDiscovery();
+        return { item: newItem, pdfAttached: attached };
+      } else {
+        // Run in background
+        performDiscovery().catch((e) =>
+          Zotero.debug(`[seerai] Background PDF discovery failed: ${e}`),
+        );
+        return { item: newItem, pdfAttached: false };
       }
-
-      // Run PDF discovery pipeline if no PDF attached yet
-      if (!pdfAttached) {
-        // Use unified PDF discovery pipeline
-        pdfAttached = await findAndAttachPdfForItem(newItem, updateStatus);
-      }
-
-      // Get source URL for fallback if no PDF obtained
-      const sourceUrl = !pdfAttached
-        ? getSourceLinkForPaper(
-          paper.externalIds?.DOI,
-          paper.externalIds?.ArXiv,
-          paper.externalIds?.PMID,
-          undefined,
-          paper.url,
-        ) || undefined
-        : undefined;
-
-      Zotero.debug(
-        `[seerai] Paper import complete, PDF attached: ${pdfAttached}`,
-      );
-      return { item: newItem, pdfAttached, sourceUrl };
     } catch (error) {
       Zotero.debug(`[seerai] Error adding paper with PDF discovery: ${error}`);
       return { item: null, pdfAttached: false };

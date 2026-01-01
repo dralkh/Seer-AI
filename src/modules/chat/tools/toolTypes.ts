@@ -169,7 +169,7 @@ export const defaultAgentConfig: AgentConfig = {
     maxSearchResults: 20,
     includeContent: true,
     maxContentLength: 50000,
-    maxAgentIterations: 15,
+    maxAgentIterations: 1000,
     maxToolRetries: 2,
     autoOcr: false,
     requireApprovalForDestructive: false,
@@ -309,6 +309,7 @@ export interface ImportPaperParams {
     paper_id: string;         // Semantic Scholar paper ID
     target_collection_id?: number;
     trigger_ocr?: boolean;    // Automatically trigger OCR after import
+    wait_for_pdf?: boolean;   // Whether to wait for PDF discovery/OCR before returning (default: true)
 }
 
 /**
