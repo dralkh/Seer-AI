@@ -57,6 +57,7 @@ import {
   PUBLICATION_TYPES,
 } from "./semanticScholar";
 import { firecrawlService, PdfDiscoveryResult } from "./firecrawl";
+import { getActiveProvider, isActiveProviderConfigured } from "./webSearchProvider";
 import { getTheme } from "../utils/theme";
 // Prompt Library & Placeholder System imports
 import { PromptTemplate, loadPrompts } from "./chat/promptLibrary";
@@ -19253,12 +19254,13 @@ ${tableRows}  </tbody>
 
       // Web Search Context
       let webContext = "";
-      if (options.webSearchEnabled && firecrawlService.isConfigured()) {
+      if (options.webSearchEnabled && isActiveProviderConfigured()) {
         try {
+          const provider = getActiveProvider();
           Zotero.debug(`[seerai] Fetching web search context for: ${text}`);
-          const webResults = await firecrawlService.webSearch(
+          const webResults = await provider.webSearch(
             text,
-            firecrawlService.getSearchLimit(),
+            provider.getSearchLimit(),
           );
 
           if (webResults.length > 0) {

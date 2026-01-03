@@ -547,7 +547,7 @@ export const agentTools: ToolDefinition[] = [
         type: "function",
         function: {
             name: TOOL_NAMES.SEARCH_WEB,
-            description: "Search the general web using Firecrawl. Use this for finding documentation, blogs, GitHub repositories, or non-academic information.",
+            description: "Search the general web for information. Use this for finding documentation, blogs, GitHub repositories, or non-academic information.",
             parameters: {
                 type: "object",
                 properties: {
@@ -568,7 +568,7 @@ export const agentTools: ToolDefinition[] = [
         type: "function",
         function: {
             name: TOOL_NAMES.READ_WEBPAGE,
-            description: "Read the content of any webpage URL as clean markdown using Firecrawl. Use this to read blogs, documentation, or news articles found via search_web.",
+            description: "Read the content of any webpage URL as clean markdown. Use this to read blogs, documentation, or news articles found via search_web.",
             parameters: {
                 type: "object",
                 properties: {

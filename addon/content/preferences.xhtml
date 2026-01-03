@@ -158,11 +158,25 @@
 
   <html:hr style="margin: 16px 0;" />
 
-  <!-- Firecrawl Settings -->
+  <!-- Web Search Integration -->
   <label>
-    <html:h3>Firecrawl Integration (Web Search &amp; PDF Discovery)</html:h3>
+    <html:h3>Web Search Integration (PDF Discovery &amp; AI Context)</html:h3>
   </label>
-  <vbox style="margin-left: 20px; padding: 10px; background: rgba(0,0,0,0.03); border-radius: 4px;">
+
+  <!-- Provider Selection -->
+  <hbox align="center" style="margin-bottom: 12px;">
+    <label style="width: 120px; font-weight: bold;">Search Provider:</label>
+    <menulist id="zotero-prefpane-__addonRef__-webSearchProvider" style="min-width: 150px;">
+      <menupopup>
+        <menuitem value="firecrawl" label="Firecrawl" />
+        <menuitem value="tavily" label="Tavily" />
+      </menupopup>
+    </menulist>
+  </hbox>
+
+  <!-- Firecrawl Settings -->
+  <vbox id="zotero-prefpane-__addonRef__-firecrawlSettings"
+    style="margin-left: 20px; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.03); border-radius: 4px;">
     <hbox align="center" style="margin-bottom: 8px;">
       <label style="width: 100px;">API Key:</label>
       <html:input type="password" id="zotero-prefpane-__addonRef__-firecrawlApiKey" placeholder="fc-YOUR-API-KEY"
@@ -196,6 +210,43 @@
         style="color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px;"
         onclick="Zotero.launchURL(this.href); return false;">
         🖥️ Setup Firecrawl Locally
+      </html:a>
+    </hbox>
+  </vbox>
+
+  <!-- Tavily Settings -->
+  <vbox id="zotero-prefpane-__addonRef__-tavilySettings"
+    style="margin-left: 20px; margin-bottom: 12px; padding: 10px; background: rgba(0,0,0,0.03); border-radius: 4px;">
+    <hbox align="center" style="margin-bottom: 8px;">
+      <label style="width: 100px;">API Key:</label>
+      <html:input type="password" id="zotero-prefpane-__addonRef__-tavilyApiKey" placeholder="tvly-YOUR-API-KEY"
+        style="flex: 1; min-width: 200px;"></html:input>
+    </hbox>
+    <hbox align="center" style="margin-bottom: 8px;">
+      <label style="width: 100px;">Search Depth:</label>
+      <menulist id="zotero-prefpane-__addonRef__-tavilySearchDepth" style="min-width: 120px;">
+        <menupopup>
+          <menuitem value="basic" label="Basic (faster)" />
+          <menuitem value="advanced" label="Advanced (deeper)" />
+        </menupopup>
+      </menulist>
+    </hbox>
+    <hbox align="center" style="margin-bottom: 8px;">
+      <label style="width: 100px;">Search Limit:</label>
+      <html:input type="number" id="zotero-prefpane-__addonRef__-tavilySearchLimit" placeholder="5" min="1" max="20"
+        style="width: 60px;"></html:input>
+      <label style="margin-left: 8px; font-size: 11px; color: #666;">Results per query (1-20)</label>
+    </hbox>
+    <hbox align="center" style="gap: 16px;">
+      <html:a href="https://app.tavily.com"
+        style="color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px;"
+        onclick="Zotero.launchURL(this.href); return false;">
+        🔍 Get Tavily API Key
+      </html:a>
+      <html:a href="https://docs.tavily.com"
+        style="color: #0066cc; text-decoration: underline; cursor: pointer; font-size: 12px;"
+        onclick="Zotero.launchURL(this.href); return false;">
+        📖 Tavily Documentation
       </html:a>
     </hbox>
   </vbox>

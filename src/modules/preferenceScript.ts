@@ -232,6 +232,45 @@ function bindPrefEvents() {
   bindInput(`zotero-prefpane-${config.addonRef}-firecrawlApiUrl`, "firecrawlApiUrl");
   bindInput(`zotero-prefpane-${config.addonRef}-firecrawlSearchLimit`, "firecrawlSearchLimit");
 
+  // Tavily settings
+  bindInput(`zotero-prefpane-${config.addonRef}-tavilyApiKey`, "tavilyApiKey");
+  bindInput(`zotero-prefpane-${config.addonRef}-tavilySearchLimit`, "tavilySearchLimit");
+
+  // Tavily search depth menulist
+  const tavilyDepthSelect = doc?.querySelector(`#zotero-prefpane-${config.addonRef}-tavilySearchDepth`) as XUL.MenuList;
+  if (tavilyDepthSelect) {
+    tavilyDepthSelect.value = Zotero.Prefs.get(`${prefPrefix}.tavilySearchDepth`) as string || "basic";
+    tavilyDepthSelect.addEventListener("command", () => {
+      Zotero.Prefs.set(`${prefPrefix}.tavilySearchDepth`, tavilyDepthSelect.value);
+    });
+  }
+
+  // Web Search Provider selection with show/hide logic
+  function updateWebSearchProviderVisibility(provider: string) {
+    const firecrawlSettings = doc?.querySelector(`#zotero-prefpane-${config.addonRef}-firecrawlSettings`) as HTMLElement;
+    const tavilySettings = doc?.querySelector(`#zotero-prefpane-${config.addonRef}-tavilySettings`) as HTMLElement;
+
+    if (firecrawlSettings) {
+      firecrawlSettings.style.display = provider === "firecrawl" ? "" : "none";
+    }
+    if (tavilySettings) {
+      tavilySettings.style.display = provider === "tavily" ? "" : "none";
+    }
+  }
+
+  const webSearchProviderSelect = doc?.querySelector(`#zotero-prefpane-${config.addonRef}-webSearchProvider`) as XUL.MenuList;
+  if (webSearchProviderSelect) {
+    const currentProvider = Zotero.Prefs.get(`${prefPrefix}.webSearchProvider`) as string || "firecrawl";
+    webSearchProviderSelect.value = currentProvider;
+    updateWebSearchProviderVisibility(currentProvider);
+
+    webSearchProviderSelect.addEventListener("command", () => {
+      Zotero.Prefs.set(`${prefPrefix}.webSearchProvider`, webSearchProviderSelect.value);
+      updateWebSearchProviderVisibility(webSearchProviderSelect.value);
+      ztoolkit.log(`Saved webSearchProvider: ${webSearchProviderSelect.value}`);
+    });
+  }
+
   // Initialize MCP Integration UI
   initMcpIntegrationUI();
 }

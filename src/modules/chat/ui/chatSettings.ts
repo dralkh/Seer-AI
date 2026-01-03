@@ -1,7 +1,7 @@
 
 import { getModelConfigs, getActiveModelConfig, setActiveModelId } from '../modelConfig';
 import { getChatStateManager } from '../stateManager';
-import { firecrawlService } from '../../firecrawl';
+import { isActiveProviderConfigured, getActiveProviderType, getActiveProvider } from '../../webSearchProvider';
 import { TOOL_NAMES } from '../tools/toolTypes';
 
 export interface ChatSettingsOptions {
@@ -247,7 +247,7 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
     body.appendChild(modeSection);
 
     // --- 3. Web Search ---
-    if (firecrawlService.isConfigured()) {
+    if (isActiveProviderConfigured()) {
         const webSection = doc.createElement('div');
         const webHeader = doc.createElement('div');
         Object.assign(webHeader.style, {
@@ -330,7 +330,7 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
         limitInput.type = 'number';
         limitInput.min = '1';
         limitInput.max = '10';
-        const currentLimit = Zotero.Prefs.get(`${prefPrefix}.firecrawlSearchLimit`) || 3;
+        const currentLimit = getActiveProvider().getSearchLimit();
         limitInput.value = String(currentLimit);
 
         Object.assign(limitInput.style, {
@@ -344,8 +344,13 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
 
         limitInput.addEventListener('change', () => {
             const val = parseInt(limitInput.value);
-            if (val >= 1 && val <= 10) {
-                Zotero.Prefs.set(`${prefPrefix}.firecrawlSearchLimit`, val);
+            if (val >= 1 && val <= 20) {
+                const providerType = getActiveProviderType();
+                if (providerType === 'tavily') {
+                    Zotero.Prefs.set(`${prefPrefix}.tavilySearchLimit`, val);
+                } else {
+                    Zotero.Prefs.set(`${prefPrefix}.firecrawlSearchLimit`, val);
+                }
             }
         });
         limitInput.addEventListener('click', (e) => e.stopPropagation());
@@ -527,7 +532,7 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
 
     // Tool List Logic
     const toolDisplayNames: Record<string, string> = {
-        [TOOL_NAMES.SEARCH_WEB]: "Search Web (Firecrawl)",
+        [TOOL_NAMES.SEARCH_WEB]: "Search Web",
         [TOOL_NAMES.READ_WEBPAGE]: "Read Webpage",
         [TOOL_NAMES.GET_CITATIONS]: "Get Citations",
         [TOOL_NAMES.GET_REFERENCES]: "Get References",

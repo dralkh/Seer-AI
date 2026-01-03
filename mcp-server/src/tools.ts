@@ -219,7 +219,7 @@ export const TOOL_DEFINITIONS = [
     },
     {
         name: "search_web",
-        description: "Search the general web using Firecrawl. Use this for finding documentation, blogs, GitHub repositories, or non-academic information.",
+        description: "Search the general web for information. Use this for finding documentation, blogs, GitHub repositories, or non-academic information.",
         inputSchema: z.object({
             query: z.string().describe("Search query"),
             limit: z.number().default(5).optional().describe("Max results (default 5)")
@@ -227,7 +227,7 @@ export const TOOL_DEFINITIONS = [
     },
     {
         name: "read_webpage",
-        description: "Read the content of any webpage URL as clean markdown using Firecrawl. Use this to read blogs, documentation, or news articles found via search_web.",
+        description: "Read the content of any webpage URL as clean markdown. Use this to read blogs, documentation, or news articles found via search_web.",
         inputSchema: z.object({
             url: z.string().describe("The URL to read")
         }),

@@ -1,6 +1,6 @@
 /**
  * Web Research Tools Implementation
- * Uses Firecrawl for searching the web and reading pages
+ * Uses unified web search provider (Firecrawl or Tavily) for searching the web and reading pages
  */
 
 import {
@@ -9,7 +9,7 @@ import {
     SearchWebParams,
     ToolResult
 } from "./toolTypes";
-import { firecrawlService } from "../../firecrawl";
+import { getActiveProvider, getActiveProviderType, getProviderDisplayName } from "../../webSearchProvider";
 
 /**
  * Execute search_web tool
@@ -21,16 +21,19 @@ export async function executeSearchWeb(
     try {
         const { query, limit = 5 } = params;
 
-        if (!firecrawlService.isConfigured()) {
+        const provider = getActiveProvider();
+        const providerType = getActiveProviderType();
+
+        if (!provider.isConfigured()) {
             return {
                 success: false,
-                error: "Firecrawl API is not configured. Please set the API key in settings."
+                error: `${getProviderDisplayName(providerType)} API is not configured. Please set the API key in settings.`
             };
         }
 
-        Zotero.debug(`[seerai] Tool: search_web query="${query}" limit=${limit}`);
+        Zotero.debug(`[seerai] Tool: search_web query="${query}" limit=${limit} provider=${providerType}`);
 
-        const results = await firecrawlService.webSearch(query, limit);
+        const results = await provider.webSearch(query, limit);
 
         return {
             success: true,
@@ -64,16 +67,19 @@ export async function executeReadWebPage(
     try {
         const { url } = params;
 
-        if (!firecrawlService.isConfigured()) {
+        const provider = getActiveProvider();
+        const providerType = getActiveProviderType();
+
+        if (!provider.isConfigured()) {
             return {
                 success: false,
-                error: "Firecrawl API is not configured. Please set the API key in settings."
+                error: `${getProviderDisplayName(providerType)} API is not configured. Please set the API key in settings.`
             };
         }
 
-        Zotero.debug(`[seerai] Tool: read_webpage url="${url}"`);
+        Zotero.debug(`[seerai] Tool: read_webpage url="${url}" provider=${providerType}`);
 
-        const result = await firecrawlService.scrapeUrl(url);
+        const result = await provider.scrapeUrl(url);
 
         if (!result) {
             return {
