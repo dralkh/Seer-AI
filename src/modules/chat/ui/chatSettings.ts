@@ -10,23 +10,25 @@ export interface ChatSettingsOptions {
 }
 
 export function showChatSettings(doc: Document, anchor: HTMLElement, options: ChatSettingsOptions = {}): void {
-    const parentContainer = anchor.parentElement;
-    if (!parentContainer) return;
-
-    // Remove existing if open
-    const existing = parentContainer.querySelector('#chat-settings-popover');
+    Zotero.debug("[seerai] showChatSettings called");
+    // Remove existing if open (check body scope)
+    const existing = doc.getElementById('chat-settings-popover-portal');
     if (existing) {
+        Zotero.debug("[seerai] Removing existing settings popover");
         existing.remove();
         return;
     }
 
+    const rect = anchor.getBoundingClientRect();
+    const win = doc.defaultView as Window;
+
     const container = doc.createElement('div');
-    container.id = 'chat-settings-popover';
+    container.id = 'chat-settings-popover-portal';
     Object.assign(container.style, {
-        position: 'absolute',
-        bottom: '100%',
-        left: '0',
-        marginBottom: '6px', // Gap between button and menu
+        position: 'fixed',
+        // Position above the anchor (sidebar footer usually)
+        bottom: `${win.innerHeight - rect.top + 8}px`,
+        left: `${rect.left}px`,
         width: '240px',
         backgroundColor: 'var(--background-primary, #fff)',
         border: '1px solid var(--border-primary, #d1d1d1)',
@@ -34,10 +36,12 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
         boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
         display: 'flex',
         flexDirection: 'column',
-        overflow: 'hidden',
+        // Removed overflow:hidden to allow dropdowns to potentially exceed if we change strategy later, 
+        // but kept structure. 
         fontSize: '13px',
         color: 'var(--text-primary, #000)',
-        zIndex: '10003'
+        zIndex: '200000', // Extreme high z-index
+        pointerEvents: 'auto'
     });
 
     // Header
@@ -163,7 +167,9 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
 
     // Toggle dropdown
     modelButton.addEventListener('click', (e) => {
+        e.preventDefault();
         e.stopPropagation();
+        Zotero.debug("[seerai] Model button clicked");
         const isVisible = optionsContainer.style.display === 'block';
         optionsContainer.style.display = isVisible ? 'none' : 'block';
     });
@@ -698,17 +704,21 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
     body.appendChild(permSection);
 
     container.appendChild(body);
-    parentContainer.appendChild(container);
+    const mountPoint = doc.body || doc.documentElement;
+    if (mountPoint) {
+        mountPoint.appendChild(container);
+    }
 
-    // Close on click outside
+    // Close on mousedown outside
     const closeHandler = (e: MouseEvent) => {
         // If click is not inside the container AND not on the anchor button
         if (!container.contains(e.target as Node) && !anchor.contains(e.target as Node)) {
+            Zotero.debug("[seerai] Click outside detected, closing settings");
             container.remove();
-            doc.removeEventListener('click', closeHandler);
+            doc.removeEventListener('mousedown', closeHandler);
         }
     };
 
     // Defer to avoid immediate close
-    setTimeout(() => doc.addEventListener('click', closeHandler), 0);
+    setTimeout(() => doc.addEventListener('mousedown', closeHandler), 0);
 }

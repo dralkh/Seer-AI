@@ -120,6 +120,14 @@ export class OpenAIService {
     }
 
     /**
+     * Clear the abort state for a new request
+     */
+    resetAbortState(): void {
+        this.isAborted = false;
+        this.currentController = null;
+    }
+
+    /**
      * Standard chat completion (non-streaming)
      */
     async chatCompletion(messages: OpenAIMessage[]): Promise<string> {

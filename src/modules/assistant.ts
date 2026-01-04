@@ -18134,21 +18134,25 @@ ${tableRows}  </tbody>
 
     const dropdown = doc.createElement("div");
     dropdown.id = "agentic-scope-dropdown";
+    const rect = anchorEl.getBoundingClientRect();
+    const docBody = doc.body || doc.documentElement;
+
     dropdown.style.cssText = `
-      position: absolute;
-      bottom: 100%;
-      left: 0;
-      margin-bottom: 4px;
-      min-width: 240px;
-      max-height: 500px;
-      overflow-y: auto;
-      background: var(--background-primary, #fff);
-      border: 1px solid var(--border-primary, #ccc);
-      border-radius: 8px;
-      box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
-      z-index: 1000;
-      padding: 4px 0;
-    `;
+    position: fixed;
+    top: ${rect.top - 4}px;
+    left: ${rect.left}px;
+    transform: translateY(-100%);
+    min-width: 240px;
+    max-height: 500px;
+    overflow-y: auto;
+    background: var(--background-primary, #fff);
+    border: 1px solid var(--border-primary, #ccc);
+    border-radius: 8px;
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
+    z-index: 200000;
+    padding: 4px 0;
+    pointer-events: auto;
+  `;
 
     const currentScope = Assistant.getScopePref();
 
@@ -18232,6 +18236,20 @@ ${tableRows}  </tbody>
     }
 
     // Agent Iteration Limit & Auto-OCR moved to Chat Settings (gear icon)
+
+    const mountPoint = doc.body || doc.documentElement;
+    if (mountPoint) {
+      mountPoint.appendChild(dropdown);
+    }
+
+    // Close on mousedown outside
+    const closeHandler = (e: MouseEvent) => {
+      if (!dropdown.contains(e.target as Node) && !anchorEl.contains(e.target as Node)) {
+        dropdown.remove();
+        doc.removeEventListener("mousedown", closeHandler);
+      }
+    };
+    setTimeout(() => doc.addEventListener("mousedown", closeHandler), 0);
   }
 
   // Position dropdown
@@ -18598,8 +18616,21 @@ ${tableRows}  </tbody>
           type: "click",
           listener: () => {
             openAIService.abortRequest();
+            // Force reset immediately to prevent UI lock if stream hangs
             this.isStreaming = false;
-            (stopBtn as HTMLElement).style.display = "none";
+            activeAgentSession = null;
+            input.disabled = false;
+            stopBtn.style.display = "none";
+            input.focus();
+
+            // Append "Generation stopped" message immediately if possible
+            const streamingMsg = messagesArea.querySelector(".message-bubble.assistant:last-child");
+            if (streamingMsg) {
+              const contentDiv = streamingMsg.querySelector("[data-content]");
+              if (contentDiv && (contentDiv.innerHTML as unknown as string).includes("typing-indicator")) {
+                contentDiv.innerHTML = `<span style="color: #c62828;">Generation stopped</span>`;
+              }
+            }
           },
         },
       ],
@@ -18725,7 +18756,9 @@ ${tableRows}  </tbody>
       listeners: [
         {
           type: "click",
-          listener: () => {
+          listener: (e: MouseEvent) => {
+            Zotero.debug("[seerai] Settings button clicked");
+            e.stopPropagation();
             showChatSettings(doc, settingsBtn as HTMLElement, {
               onModeChange: async (mode) => {
                 // If switching to default or explore mode, auto-add current item
@@ -19236,6 +19269,9 @@ ${tableRows}  </tbody>
     pastedImages: { id: string; image: string; mimeType: string }[],
     clearImages: () => void,
   ) {
+    // Reset abort state for a new request
+    openAIService.resetAbortState();
+
     const text = input.value.trim();
     // Allow sending with just images
     if ((!text && pastedImages.length === 0) || this.isStreaming) return;
@@ -19318,6 +19354,7 @@ ${tableRows}  </tbody>
 
     const observer: AgentUIObserver = {
       onToken: (token: string, fullResponse: string) => {
+        if (!Assistant.isStreaming) return;
         session.fullResponse = fullResponse;
         if (session.contentDiv) {
           // Process streaming content to handle think tags
@@ -19362,6 +19399,7 @@ ${tableRows}  </tbody>
         }
       },
       onToolCallStarted: (toolCall: ToolCall) => {
+        if (!Assistant.isStreaming) return;
         session.isThinking = false;
 
         if (session.messagesArea && session.contentDiv) {
@@ -19397,6 +19435,7 @@ ${tableRows}  </tbody>
         }
       },
       onToolCallCompleted: (toolCall: ToolCall, result: ToolResult) => {
+        if (!Assistant.isStreaming) return;
         const tr = session.toolResults.find(t => t.toolCall.id === toolCall.id);
         if (tr) tr.result = result;
 
@@ -19409,6 +19448,7 @@ ${tableRows}  </tbody>
         }
       },
       onMessageUpdate: (content: string) => {
+        if (!Assistant.isStreaming) return;
         // Strip think tags from the content
         const cleanedContent = stripThinkTags(content);
         session.fullResponse = cleanedContent;
@@ -19427,6 +19467,7 @@ ${tableRows}  </tbody>
         }
       },
       onComplete: async (content: string) => {
+        if (!Assistant.isStreaming) return;
         // Strip think tags from the final content
         const cleanedContent = stripThinkTags(content);
         session.fullResponse = cleanedContent;
@@ -19477,6 +19518,7 @@ ${tableRows}  </tbody>
         clearImages();
       },
       onError: (error: Error) => {
+        if (!Assistant.isStreaming) return;
         Zotero.debug(`[seerai] Agent error: ${error}`);
         if (session.contentDiv) {
           if (session.toolProcessState) {
@@ -20001,6 +20043,7 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
           messages,
           {
             onToken: (token) => {
+              if (!this.isStreaming) return; // Guard against updates after stop
               fullResponse += token;
               if (contentDiv) {
                 // Process streaming content to handle think tags
@@ -20076,6 +20119,7 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
       input.disabled = false;
       input.focus();
       this.isStreaming = false;
+      activeAgentSession = null; // Ensure session is cleared
       if (stopBtn) stopBtn.style.display = "none";
     }
   }

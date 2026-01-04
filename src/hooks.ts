@@ -6,6 +6,9 @@ import { createZToolkit } from "./utils/ztoolkit";
 import { OcrService } from "./modules/ocr";
 import { initThemeObserver } from "./utils/theme";
 import { registerApiEndpoints } from "./modules/api";
+import { executeGenerateItemTags } from "./modules/chat/tools/tagTool";
+import { defaultAgentConfig } from "./modules/chat/tools/toolTypes";
+import { getActiveModelConfig } from "./modules/chat/modelConfig";
 
 const ocrService = new OcrService();
 
@@ -48,6 +51,22 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
   const menu = win.document.getElementById(menuId);
   if (menu) {
     const menuItemId = "seerai-datalab-ocr";
+
+    // Generate Tags menu item
+    const generateTagsMenuItemId = "seerai-generate-tags";
+    let generateTagsMenuItem = win.document.getElementById(generateTagsMenuItemId) as XUL.MenuItem;
+    if (!generateTagsMenuItem) {
+      generateTagsMenuItem = win.document.createXULElement("menuitem") as XUL.MenuItem;
+      generateTagsMenuItem.setAttribute("id", generateTagsMenuItemId);
+      generateTagsMenuItem.setAttribute("label", "✨ Generate Tags");
+      generateTagsMenuItem.setAttribute("class", "menuitem-iconic");
+      generateTagsMenuItem.addEventListener("command", async () => {
+        await processGenerateTagsForSelectedItems();
+      });
+      menu.appendChild(generateTagsMenuItem);
+    }
+
+    // Extract with OCR menu item
     let menuItem = win.document.getElementById(menuItemId) as XUL.MenuItem;
     if (!menuItem) {
       menuItem = win.document.createXULElement("menuitem") as XUL.MenuItem;
@@ -162,6 +181,10 @@ async function onMainWindowLoad(win: _ZoteroTypes.MainWindow): Promise<void> {
         Assistant.isItemInCurrentTable(item.id),
       );
       removeFromTableMenu.hidden = !isRegularSelection || !anyInTable;
+
+      // Generate Tags Visibility
+      // Show for regular items (same as "Extract with OCR" roughly, but broader)
+      generateTagsMenuItem.hidden = !isRegularSelection;
     });
   }
 
@@ -397,6 +420,75 @@ async function processParentItemsInBatches(parentItems: Zotero.Item[]) {
     );
   }
   ztoolkit.log(`DataLab: All batches complete`);
+  ztoolkit.log(`DataLab: All batches complete`);
+}
+
+/**
+ * Process selected items to generate tags
+ */
+async function processGenerateTagsForSelectedItems() {
+  const items = Zotero.getActiveZoteroPane().getSelectedItems();
+  const regularItems = items.filter(i => i.isRegularItem());
+
+  if (regularItems.length === 0) {
+    return;
+  }
+
+  const activeModel = getActiveModelConfig();
+  if (!activeModel) {
+    Zotero.getMainWindow().alert("Please configure an AI model in settings first.");
+    return;
+  }
+
+  const pw = new ztoolkit.ProgressWindow("Generate Tags");
+  pw.show();
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const item of regularItems) {
+    const title = item.getField("title");
+    const line = pw.createLine({
+      text: `Generating tags for "${title}"...`,
+      progress: -1,
+      icon: "default"
+    });
+
+    try {
+      const result = await executeGenerateItemTags(
+        { item_id: item.id },
+        defaultAgentConfig
+      );
+
+      if (result.success) {
+        line.changeLine({
+          text: `Tags generated for "${title}"`,
+          progress: 100,
+          icon: "default"
+        });
+        successCount++;
+      } else {
+        line.changeLine({
+          text: `Error for "${title}": ${result.error}`,
+          progress: 100,
+          icon: "warning"
+        });
+        errorCount++;
+      }
+    } catch (e: any) {
+      line.changeLine({
+        text: `Error for "${title}": ${e.message || e}`,
+        progress: 100,
+        icon: "warning"
+      });
+      errorCount++;
+    }
+  }
+
+  pw.createLine({
+    text: `Complete: ${successCount} processed, ${errorCount} errors.`,
+    progress: 100,
+  });
 }
 
 async function onMainWindowUnload(win: Window): Promise<void> {
