@@ -2426,10 +2426,8 @@ export class Assistant {
             });
             const tableStore = getTableStore();
             await tableStore.saveConfig(currentTableConfig);
-            // Refresh
-            if (currentContainer && currentItem) {
-              this.renderInterface(currentContainer, currentItem);
-            }
+            // Force immediate refresh with container validation
+            await this.forceRefreshTable();
           }
         }
       },
@@ -2466,10 +2464,8 @@ export class Assistant {
               const tableStore = getTableStore();
               await tableStore.saveConfig(currentTableConfig);
             }
-            // Refresh
-            if (currentContainer && currentItem) {
-              this.renderInterface(currentContainer, currentItem);
-            }
+            // Force immediate refresh with container validation
+            await this.forceRefreshTable();
           } catch (err) {
             doc.defaultView?.alert(`Error deleting items: ${err}`);
           }
@@ -7999,6 +7995,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
 
     // === PAGINATION CONTROLS ===
     const paginationContainer = ztoolkit.UI.createElement(doc, "div", {
+      properties: { className: "pagination-container" },
       styles: {
         display: "flex",
         alignItems: "center",
@@ -8036,9 +8033,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
               currentTableConfig.currentPage = 1; // Reset to page 1 on size change
               const tableStore = getTableStore();
               await tableStore.saveConfig(currentTableConfig);
-              if (currentContainer && currentItem) {
-                this.renderInterface(currentContainer, currentItem);
-              }
+              await this.forceRefreshTable();
             }
           },
         },
@@ -8083,9 +8078,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
               currentTableConfig.currentPage = currentPage - 1;
               const tableStore = getTableStore();
               await tableStore.saveConfig(currentTableConfig);
-              if (currentContainer && currentItem) {
-                this.renderInterface(currentContainer, currentItem);
-              }
+              await this.forceRefreshTable();
             }
           },
         },
@@ -8095,7 +8088,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
 
     // Page Indicator
     const pageIndicator = ztoolkit.UI.createElement(doc, "span", {
-      properties: { innerText: `${currentPage} / ${totalPages}` },
+      properties: { id: "table-page-indicator", innerText: `${currentPage} / ${totalPages}` },
       styles: {
         fontSize: "11px",
         fontWeight: "600",
@@ -8125,9 +8118,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
               currentTableConfig.currentPage = currentPage + 1;
               const tableStore = getTableStore();
               await tableStore.saveConfig(currentTableConfig);
-              if (currentContainer && currentItem) {
-                this.renderInterface(currentContainer, currentItem);
-              }
+              await this.forceRefreshTable();
             }
           },
         },
@@ -13282,7 +13273,8 @@ You MUST call the generate_tags function.`;
             type: "click",
             listener: async (e: Event) => {
               e.stopPropagation();
-              const btn = e.target as HTMLElement;
+              const btn = (e.target as HTMLElement).closest("button") as HTMLElement;
+              if (!btn) return;
 
               if (btn.dataset.confirmBomb !== "true") {
                 btn.dataset.confirmBomb = "true";
@@ -13321,10 +13313,7 @@ You MUST call the generate_tags function.`;
                   await tableStore.saveConfig(currentTableConfig);
                 }
 
-                // Refresh table
-                if (currentContainer && currentItem) {
-                  this.renderInterface(currentContainer, currentItem);
-                }
+                await this.forceRefreshTable();
               } catch (err) {
                 Zotero.debug(`[seerai] Error deleting item: ${err}`);
                 btn.innerText = "❌";
@@ -13361,7 +13350,8 @@ You MUST call the generate_tags function.`;
             type: "click",
             listener: async (e: Event) => {
               e.stopPropagation();
-              const btn = e.target as HTMLElement;
+              const btn = (e.target as HTMLElement).closest("button") as HTMLElement;
+              if (!btn) return;
 
               // Confirm removal with visual feedback
               if (btn.dataset.confirmRemove !== "true") {
@@ -13400,10 +13390,8 @@ You MUST call the generate_tags function.`;
                 const tableStore = getTableStore();
                 await tableStore.saveConfig(currentTableConfig);
 
-                // Refresh the table UI
-                if (currentContainer && currentItem) {
-                  this.renderInterface(currentContainer, currentItem);
-                }
+                // Force immediate refresh
+                await this.forceRefreshTable();
               }
             },
           },
@@ -13455,6 +13443,132 @@ You MUST call the generate_tags function.`;
         }
       }
     }, 300);
+  }
+
+  /**
+   * Force an immediate table refresh with proper container validation.
+   * Use this for user-initiated actions that need immediate feedback.
+   * Only refreshes the table content, preserves scroll position.
+   */
+  private static async forceRefreshTable(): Promise<void> {
+    Zotero.debug("[seerai] forceRefreshTable: Starting targeted refresh...");
+
+    if (!currentItem) {
+      Zotero.debug("[seerai] forceRefreshTable: No item available");
+      return;
+    }
+
+    // Find the table wrapper - try multiple strategies
+    let tableWrapper: HTMLElement | null = null;
+    let doc: Document | null = null;
+
+    // Strategy 1: Look in currentContainer
+    if (currentContainer && currentContainer.isConnected) {
+      tableWrapper = currentContainer.querySelector(".table-wrapper") as HTMLElement;
+      if (tableWrapper) {
+        doc = currentContainer.ownerDocument;
+        Zotero.debug("[seerai] forceRefreshTable: Found table wrapper in currentContainer");
+      }
+    }
+
+    // Strategy 2: Look in main windows
+    if (!tableWrapper) {
+      const windows = Zotero.getMainWindows();
+      for (const win of windows) {
+        tableWrapper = win.document.querySelector(".table-wrapper") as HTMLElement;
+        if (tableWrapper && tableWrapper.isConnected) {
+          doc = win.document;
+          Zotero.debug("[seerai] forceRefreshTable: Found table wrapper in main window");
+          break;
+        }
+      }
+    }
+
+    // Strategy 3: Use document.querySelectorAll to find any table wrapper
+    if (!tableWrapper && currentContainer?.ownerDocument) {
+      const allWrappers = currentContainer.ownerDocument.querySelectorAll(".table-wrapper");
+      for (const wrapper of allWrappers) {
+        if ((wrapper as HTMLElement).isConnected) {
+          tableWrapper = wrapper as HTMLElement;
+          doc = currentContainer.ownerDocument;
+          Zotero.debug("[seerai] forceRefreshTable: Found table wrapper via querySelectorAll");
+          break;
+        }
+      }
+    }
+
+    if (!tableWrapper || !tableWrapper.isConnected || !doc) {
+      Zotero.debug("[seerai] forceRefreshTable: No table wrapper found, falling back to full refresh");
+      // Fallback to full refresh
+      if (currentContainer && currentContainer.isConnected) {
+        this.lastRenderedTab = "";
+        this.lastRenderedItemId = 0;
+        this.lastRenderedContainer = null;
+        await this.renderInterface(currentContainer, currentItem);
+      }
+      return;
+    }
+
+    // Save scroll position
+    const scrollTop = tableWrapper.scrollTop;
+    const scrollLeft = tableWrapper.scrollLeft;
+    Zotero.debug(`[seerai] forceRefreshTable: Preserving scroll (${scrollTop}, ${scrollLeft})`);
+
+    // Reload table data and rebuild just the table
+    const tableData = await this.loadTableData();
+    Zotero.debug(`[seerai] forceRefreshTable: Loaded ${tableData.rows.length} rows, page ${tableData.currentPage}/${tableData.totalPages}`);
+
+    tableWrapper.innerHTML = "";
+
+    if (tableData.rows.length === 0) {
+      tableWrapper.appendChild(this.createTableEmptyState(doc, currentItem));
+    } else {
+      tableWrapper.appendChild(this.createPapersTable(doc, tableData));
+    }
+
+    // Restore scroll position
+    tableWrapper.scrollTop = scrollTop;
+    tableWrapper.scrollLeft = scrollLeft;
+
+    // Also update the pagination UI in the toolbar
+    this.updatePaginationUI(doc, tableData);
+
+    Zotero.debug("[seerai] forceRefreshTable: Targeted refresh complete");
+  }
+
+  /**
+   * Update just the pagination UI without full refresh
+   */
+  private static updatePaginationUI(doc: Document, tableData: TableData): void {
+    // Try to find elements within currentContainer first for better reliability
+    const root: ParentNode = (currentContainer && currentContainer.isConnected) ? currentContainer : doc;
+
+    // Update page indicator using ID
+    const pageIndicator = root.querySelector("#table-page-indicator") as HTMLElement;
+    if (pageIndicator) {
+      pageIndicator.innerText = `${tableData.currentPage} / ${tableData.totalPages}`;
+      Zotero.debug(`[seerai] updatePaginationUI: Updated to ${tableData.currentPage}/${tableData.totalPages}`);
+    } else {
+      Zotero.debug("[seerai] updatePaginationUI: Page indicator not found");
+    }
+
+    // Update button states
+    const paginationContainer = root.querySelector(".pagination-container");
+    if (paginationContainer) {
+      const buttons = paginationContainer.querySelectorAll("button");
+      // First button is prev, last button is next  
+      const prevBtn = buttons[0] as HTMLButtonElement;
+      const nextBtn = buttons[buttons.length - 1] as HTMLButtonElement;
+
+      if (prevBtn) {
+        prevBtn.disabled = tableData.currentPage <= 1;
+        prevBtn.style.opacity = tableData.currentPage <= 1 ? "0.5" : "1";
+      }
+      if (nextBtn) {
+        nextBtn.disabled = tableData.currentPage >= tableData.totalPages;
+        nextBtn.style.opacity = tableData.currentPage >= tableData.totalPages ? "0.5" : "1";
+      }
+    }
   }
 
   /**
@@ -21221,9 +21335,9 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
     const tableStore = getTableStore();
     await tableStore.saveConfig(currentTableConfig);
 
-    // Refresh if visible
-    if (activeTab === "table" && currentContainer && currentItem) {
-      this.renderInterface(currentContainer, currentItem);
+    // Force immediate refresh if table tab is visible
+    if (activeTab === "table") {
+      await this.forceRefreshTable();
     }
 
     new ztoolkit.ProgressWindow("DataLab")
@@ -21269,9 +21383,9 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
     const tableStore = getTableStore();
     await tableStore.saveConfig(currentTableConfig);
 
-    // Refresh if visible
-    if (activeTab === "table" && currentContainer && currentItem) {
-      this.renderInterface(currentContainer, currentItem);
+    // Force immediate refresh if table tab is visible
+    if (activeTab === "table") {
+      await this.forceRefreshTable();
     }
 
     new ztoolkit.ProgressWindow("DataLab")
