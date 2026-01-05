@@ -996,6 +996,28 @@ export class Assistant {
 
   // UI state
   private static isStreaming: boolean = false;
+  private static lastRenderTime: number = 0;
+  private static lastRenderValue: string = "";
+  private static readonly RENDER_THROTTLE_MS: number = 60;
+
+  /**
+   * Throttled markdown rendering to prevent layout thrashing and crashes
+   */
+  private static smartRender(mdContainer: HTMLElement, content: string, force: boolean = false) {
+    const now = Date.now();
+    if (!force && (now - this.lastRenderTime < this.RENDER_THROTTLE_MS) && content === this.lastRenderValue) {
+      return;
+    }
+
+    if (!force && (now - this.lastRenderTime < this.RENDER_THROTTLE_MS)) {
+      return;
+    }
+
+    mdContainer.setAttribute("data-raw", content);
+    mdContainer.innerHTML = parseMarkdown(content);
+    this.lastRenderTime = now;
+    this.lastRenderValue = content;
+  }
 
   static register() {
     Zotero.ItemPaneManager.registerSection({
@@ -18667,9 +18689,16 @@ ${tableRows}  </tbody>
             // Append "Generation stopped" message immediately if possible
             const streamingMsg = messagesArea.querySelector(".message-bubble.assistant:last-child");
             if (streamingMsg) {
-              const contentDiv = streamingMsg.querySelector("[data-content]");
-              if (contentDiv && (contentDiv.innerHTML as unknown as string).includes("typing-indicator")) {
-                contentDiv.innerHTML = `<span style="color: #c62828;">Generation stopped</span>`;
+              const contentDiv = streamingMsg.querySelector("[data-content]") as HTMLElement;
+              if (contentDiv) {
+                const indicator = contentDiv.querySelector(".typing-indicator");
+                if (indicator) {
+                  indicator.remove();
+                  const stopMsg = doc.createElement("span");
+                  stopMsg.style.color = "#c62828";
+                  stopMsg.textContent = "Generation stopped";
+                  contentDiv.appendChild(stopMsg);
+                }
               }
             }
           },
@@ -19408,15 +19437,13 @@ ${tableRows}  </tbody>
           }
 
           if (session.isThinking && displayContent) {
-            // Clear initial typing indicator if present
-            if (session.contentDiv.querySelector(".typing-indicator")) {
-              session.contentDiv.innerHTML = "";
-            }
+            // Clear initial typing indicator surgically
+            session.contentDiv.querySelector(".typing-indicator")?.remove();
             session.isThinking = false;
           }
 
           // Ensure markdown container exists
-          let mdContainer = session.contentDiv.querySelector(".markdown-content");
+          let mdContainer = session.contentDiv.querySelector(".markdown-content") as HTMLElement;
           if (!mdContainer) {
             mdContainer = session.contentDiv.ownerDocument!.createElement("div");
             mdContainer.className = "markdown-content";
@@ -19427,11 +19454,9 @@ ${tableRows}  </tbody>
             }
           }
 
-          // Only update if we have content to display
+          // Throttled update
           if (displayContent) {
-            // Update only the markdown container
-            mdContainer.setAttribute("data-raw", displayContent);
-            mdContainer.innerHTML = parseMarkdown(displayContent);
+            this.smartRender(mdContainer, displayContent);
           }
         }
         if (session.messagesArea) {
@@ -19455,10 +19480,8 @@ ${tableRows}  </tbody>
 
           // Initial creation of the process container logic
           if (!session.toolProcessState) {
-            // Clear initial typing indicator if it's the only thing there
-            if (session.contentDiv.querySelector(".typing-indicator") && !session.fullResponse) {
-              session.contentDiv.innerHTML = "";
-            }
+            // Surgical removal of typing indicator
+            session.contentDiv.querySelector(".typing-indicator")?.remove();
 
             const processUI = createToolProcessUI(doc);
             session.toolProcessState = processUI;
@@ -19509,9 +19532,9 @@ ${tableRows}  </tbody>
         const cleanedContent = stripThinkTags(content);
         session.fullResponse = cleanedContent;
         if (session.contentDiv) {
-          // Clear initial typing indicator if we now have cleaned content to show
-          if (cleanedContent && session.contentDiv.querySelector(".typing-indicator")) {
-            session.contentDiv.innerHTML = "";
+          // Surgical removal of typing indicator
+          if (cleanedContent) {
+            session.contentDiv.querySelector(".typing-indicator")?.remove();
           }
 
           let mdContainer = session.contentDiv.querySelector(".markdown-content");
@@ -19556,8 +19579,7 @@ ${tableRows}  </tbody>
             }
           }
           if (cleanedContent) {
-            mdContainer.setAttribute("data-raw", cleanedContent);
-            mdContainer.innerHTML = parseMarkdown(cleanedContent);
+            this.smartRender(mdContainer as HTMLElement, cleanedContent, true); // Force final render
           }
         }
 
@@ -20135,13 +20157,20 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
                 }
 
                 if (isFirstToken && displayContent) {
-                  contentDiv.innerHTML = ""; // Clear loading indicator
+                  // Surgical removal
+                  contentDiv.querySelector(".typing-indicator")?.remove();
                   isFirstToken = false;
                 }
 
                 if (displayContent) {
-                  contentDiv.setAttribute("data-raw", displayContent);
-                  contentDiv.innerHTML = parseMarkdown(displayContent);
+                  // Ensure markdown container exists
+                  let mdContainer = contentDiv.querySelector(".markdown-content") as HTMLElement;
+                  if (!mdContainer) {
+                    mdContainer = contentDiv.ownerDocument!.createElement("div");
+                    mdContainer.className = "markdown-content";
+                    contentDiv.appendChild(mdContainer);
+                  }
+                  this.smartRender(mdContainer, displayContent);
                   messagesArea.scrollTop = messagesArea.scrollHeight;
                 }
               }

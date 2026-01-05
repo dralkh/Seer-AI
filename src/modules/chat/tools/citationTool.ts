@@ -35,7 +35,7 @@ export async function executeRelatedPapers(
 /**
  * Execute get_citations tool (Forward Citations)
  */
-export async function executeGetCitations(
+async function executeGetCitations(
     params: GetCitationsParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -78,7 +78,7 @@ export async function executeGetCitations(
 /**
  * Execute get_references tool (Backward References)
  */
-export async function executeGetReferences(
+async function executeGetReferences(
     params: GetReferencesParams,
     _config: AgentConfig
 ): Promise<ToolResult> {

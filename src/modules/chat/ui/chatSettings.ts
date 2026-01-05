@@ -538,30 +538,18 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
 
     // Tool List Logic
     const toolDisplayNames: Record<string, string> = {
-        [TOOL_NAMES.SEARCH_WEB]: "Search Web",
-        [TOOL_NAMES.READ_WEBPAGE]: "Read Webpage",
-        [TOOL_NAMES.GET_CITATIONS]: "Get Citations",
-        [TOOL_NAMES.GET_REFERENCES]: "Get References",
         [TOOL_NAMES.SEARCH_LIBRARY]: "Search Library",
         [TOOL_NAMES.GET_ITEM_METADATA]: "Get Metadata",
         [TOOL_NAMES.READ_ITEM_CONTENT]: "Read Content",
-        [TOOL_NAMES.CREATE_NOTE]: "Create Note",
-        [TOOL_NAMES.MOVE_ITEM]: "Move Item",
-        [TOOL_NAMES.REMOVE_ITEM_FROM_COLLECTION]: "Remove from Collection",
-        [TOOL_NAMES.ADD_TO_CONTEXT]: "Add to Context",
-        [TOOL_NAMES.REMOVE_FROM_CONTEXT]: "Remove from Context",
-        [TOOL_NAMES.LIST_CONTEXT]: "List Context",
-        [TOOL_NAMES.LIST_TABLES]: "List Tables",
-        [TOOL_NAMES.CREATE_TABLE]: "Create Table",
-        [TOOL_NAMES.ADD_TO_TABLE]: "Add to Table",
-        [TOOL_NAMES.CREATE_TABLE_COLUMN]: "Create Table Column",
-        [TOOL_NAMES.GENERATE_TABLE_DATA]: "Generate Table Data",
-        [TOOL_NAMES.READ_TABLE]: "Read Table",
         [TOOL_NAMES.SEARCH_EXTERNAL]: "Search External",
         [TOOL_NAMES.IMPORT_PAPER]: "Import Paper",
-        [TOOL_NAMES.FIND_COLLECTION]: "Find Collection",
-        [TOOL_NAMES.CREATE_COLLECTION]: "Create Collection",
-        [TOOL_NAMES.LIST_COLLECTION]: "List Collection",
+        [TOOL_NAMES.GENERATE_ITEM_TAGS]: "Generate Tags",
+        [TOOL_NAMES.CONTEXT]: "Conversation Context",
+        [TOOL_NAMES.COLLECTION]: "Zotero Collections",
+        [TOOL_NAMES.TABLE]: "Analysis Tables",
+        [TOOL_NAMES.NOTE]: "Zotero Notes",
+        [TOOL_NAMES.RELATED_PAPERS]: "Related Papers",
+        [TOOL_NAMES.WEB]: "Web Tools",
     };
 
     // --- BULK ACTIONS ---

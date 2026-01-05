@@ -35,7 +35,7 @@ export async function executeWeb(
 /**
  * Execute search_web tool
  */
-export async function executeSearchWeb(
+async function executeSearchWeb(
     params: SearchWebParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -81,7 +81,7 @@ export async function executeSearchWeb(
 /**
  * Execute read_webpage tool
  */
-export async function executeReadWebPage(
+async function executeReadWebPage(
     params: ReadWebPageParams,
     _config: AgentConfig
 ): Promise<ToolResult> {

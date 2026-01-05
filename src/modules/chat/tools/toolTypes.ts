@@ -799,54 +799,13 @@ export const TOOL_NAMES = {
     GENERATE_ITEM_TAGS: "generate_item_tags",
 
     // Consolidated tools
+    // Consolidated tools
     CONTEXT: "context",
     COLLECTION: "collection",
     TABLE: "table",
     NOTE: "note",
     RELATED_PAPERS: "related_papers",
     WEB: "web",
-
-    // Legacy aliases (for backwards compatibility during migration)
-    /** @deprecated Use CONTEXT with action="add" */
-    ADD_TO_CONTEXT: "add_to_context",
-    /** @deprecated Use CONTEXT with action="remove" */
-    REMOVE_FROM_CONTEXT: "remove_from_context",
-    /** @deprecated Use CONTEXT with action="list" */
-    LIST_CONTEXT: "list_context",
-    /** @deprecated Use TABLE with action="list" */
-    LIST_TABLES: "list_tables",
-    /** @deprecated Use TABLE with action="create" */
-    CREATE_TABLE: "create_table",
-    /** @deprecated Use TABLE with action="add_papers" */
-    ADD_TO_TABLE: "add_to_table",
-    /** @deprecated Use TABLE with action="add_column" */
-    CREATE_TABLE_COLUMN: "create_table_column",
-    /** @deprecated Use TABLE with action="generate" */
-    GENERATE_TABLE_DATA: "generate_table_data",
-    /** @deprecated Use TABLE with action="read" */
-    READ_TABLE: "read_table",
-    /** @deprecated Use NOTE with action="create" */
-    CREATE_NOTE: "create_note",
-    /** @deprecated Use NOTE with action="edit" */
-    EDIT_NOTE: "edit_note",
-    /** @deprecated Use COLLECTION with action="find" */
-    FIND_COLLECTION: "find_collection",
-    /** @deprecated Use COLLECTION with action="create" */
-    CREATE_COLLECTION: "create_collection",
-    /** @deprecated Use COLLECTION with action="list" */
-    LIST_COLLECTION: "list_collection",
-    /** @deprecated Use COLLECTION with action="add_item" */
-    MOVE_ITEM: "move_item",
-    /** @deprecated Use COLLECTION with action="remove_item" */
-    REMOVE_ITEM_FROM_COLLECTION: "remove_item_from_collection",
-    /** @deprecated Use WEB with action="search" */
-    SEARCH_WEB: "search_web",
-    /** @deprecated Use WEB with action="read" */
-    READ_WEBPAGE: "read_webpage",
-    /** @deprecated Use RELATED_PAPERS with action="citations" */
-    GET_CITATIONS: "get_citations",
-    /** @deprecated Use RELATED_PAPERS with action="references" */
-    GET_REFERENCES: "get_references",
 } as const;
 
 export type ToolName = typeof TOOL_NAMES[keyof typeof TOOL_NAMES];

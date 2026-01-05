@@ -85,7 +85,7 @@ function getCollectionPath(collection: Zotero.Collection): string {
 /**
  * Execute find_collection tool
  */
-export async function executeFindCollection(
+async function executeFindCollection(
     params: FindCollectionParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -154,7 +154,7 @@ export async function executeFindCollection(
 /**
  * Execute create_collection tool
  */
-export async function executeCreateCollection(
+async function executeCreateCollection(
     params: CreateCollectionParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -235,7 +235,7 @@ export async function executeCreateCollection(
 /**
  * Execute list_collection tool
  */
-export async function executeListCollection(
+async function executeListCollection(
     params: ListCollectionParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -289,7 +289,7 @@ export async function executeListCollection(
 /**
  * Execute move_item tool
  */
-export async function executeMoveItem(
+async function executeMoveItem(
     params: MoveItemParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -382,7 +382,7 @@ export async function executeMoveItem(
 /**
  * Execute remove_item_from_collection tool
  */
-export async function executeRemoveItemFromCollection(
+async function executeRemoveItemFromCollection(
     params: RemoveItemFromCollectionParams,
     _config: AgentConfig
 ): Promise<ToolResult> {

@@ -17,7 +17,7 @@ import {
     openAIService
 } from "../openai";
 import {
-    getAgentTools,
+    agentTools,
     executeToolCall,
     formatToolResult,
     getAgentConfigFromPrefs,
@@ -382,7 +382,7 @@ export async function handleAgenticChat(
 
     // Get tools if enabled
     const tools: ToolDefinition[] | undefined = options.enableTools
-        ? getAgentTools()
+        ? agentTools
         : undefined;
 
     // Build initial messages

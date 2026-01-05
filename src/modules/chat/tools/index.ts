@@ -17,7 +17,7 @@ export {
 } from "./schemas";
 
 // Tool definitions
-export { agentTools, getAgentTools, getToolByName } from "./toolDefinitions";
+export { agentTools, getToolByName } from "./toolDefinitions";
 
 // Tool executor
 export {
@@ -29,11 +29,13 @@ export {
 } from "./toolExecutor";
 
 // Individual tools (for direct use if needed)
-export { executeSearchLibrary } from "./searchTool";
+export { executeSearchLibrary, executeSearchExternal, executeImportPaper } from "./searchTool";
 export { executeGetItemMetadata, executeReadItemContent } from "./readTool";
-export { executeCreateNote } from "./noteTool";
-export { executeAddToContext, executeRemoveFromContext, executeListContext } from "./contextTool";
-export { executeListTables, executeCreateTableColumn, executeGenerateTableData, executeReadTable } from "./tableTool";
-export { executeSearchWeb, executeReadWebPage } from "./webTool";
-export { executeGetCitations, executeGetReferences } from "./citationTool";
+export { executeNote } from "./noteTool";
+export { executeContext } from "./contextTool";
+export { executeTable } from "./tableTool";
+export { executeCollection } from "./collectionTool";
+export { executeWeb } from "./webTool";
+export { executeRelatedPapers } from "./citationTool";
+export { executeGenerateItemTags } from "./tagTool";
 

@@ -107,7 +107,7 @@ async function findTable(tableId: string | undefined): Promise<any | null> {
 /**
  * Execute list_tables tool
  */
-export async function executeListTables(
+async function executeListTables(
     _params: ListTablesParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -149,7 +149,7 @@ export async function executeListTables(
 /**
  * Execute create_table tool
  */
-export async function executeCreateTable(
+async function executeCreateTable(
     params: CreateTableParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -207,7 +207,7 @@ export async function executeCreateTable(
 /**
  * Execute add_to_table tool
  */
-export async function executeAddToTable(
+async function executeAddToTable(
     params: AddToTableParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -272,7 +272,7 @@ export async function executeAddToTable(
 /**
  * Execute create_table_column tool
  */
-export async function executeCreateTableColumn(
+async function executeCreateTableColumn(
     params: CreateTableColumnParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -349,7 +349,7 @@ export async function executeCreateTableColumn(
  * Note: This is a simplified version - full generation would require 
  * more complex async handling and progress tracking
  */
-export async function executeGenerateTableData(
+async function executeGenerateTableData(
     params: GenerateTableDataParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -440,7 +440,7 @@ export async function executeGenerateTableData(
 /**
  * Execute read_table tool - reads complete table structure and data
  */
-export async function executeReadTable(
+async function executeReadTable(
     params: ReadTableParams,
     _config: AgentConfig
 ): Promise<ToolResult> {

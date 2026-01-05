@@ -5,7 +5,6 @@
  * @see agentic.md Section 4.1 - Zod validation with self-correction
  */
 
-import { ZodError } from "zod";
 import {
     ToolCall,
     ParsedToolCall,
@@ -13,30 +12,12 @@ import {
     AgentConfig,
     defaultAgentConfig,
     TOOL_NAMES,
+    // Core types
     SearchLibraryParams,
     GetItemMetadataParams,
     ReadItemContentParams,
-    CreateNoteParams,
-    EditNoteParams,
-    AddToContextParams,
-    RemoveFromContextParams,
-    ListTablesParams,
-    CreateTableParams,
-    AddToTableParams,
-    CreateTableColumnParams,
-    GenerateTableDataParams,
-    ReadTableParams,
     SearchExternalParams,
     ImportPaperParams,
-    FindCollectionParams,
-    MoveItemParams,
-    RemoveItemFromCollectionParams,
-    CreateCollectionParams,
-    ListCollectionParams,
-    SearchWebParams,
-    ReadWebPageParams,
-    GetCitationsParams,
-    GetReferencesParams,
     GenerateItemTagsParams,
     // Unified types
     ContextParams,
@@ -51,27 +32,12 @@ import { safeValidateToolArgs, formatZodError } from "./schemas";
 
 import { executeSearchLibrary, executeSearchExternal, executeImportPaper } from "./searchTool";
 import { executeGetItemMetadata, executeReadItemContent } from "./readTool";
-import { executeCreateNote, executeEditNote, executeNote } from "./noteTool";
-import { executeAddToContext, executeRemoveFromContext, executeListContext, executeContext } from "./contextTool";
-import {
-    executeListTables,
-    executeCreateTable,
-    executeAddToTable,
-    executeCreateTableColumn,
-    executeGenerateTableData,
-    executeReadTable,
-    executeTable,
-} from "./tableTool";
-import {
-    executeFindCollection,
-    executeMoveItem,
-    executeRemoveItemFromCollection,
-    executeCreateCollection,
-    executeListCollection,
-    executeCollection,
-} from "./collectionTool";
-import { executeSearchWeb, executeReadWebPage, executeWeb } from "./webTool";
-import { executeGetCitations, executeGetReferences, executeRelatedPapers } from "./citationTool";
+import { executeNote } from "./noteTool";
+import { executeContext } from "./contextTool";
+import { executeTable } from "./tableTool";
+import { executeCollection } from "./collectionTool";
+import { executeWeb } from "./webTool";
+import { executeRelatedPapers } from "./citationTool";
 import { executeGenerateItemTags } from "./tagTool";
 
 
@@ -136,6 +102,7 @@ export async function executeToolCall(
         const validatedArgs = validation.data;
 
         switch (parsed.name) {
+            // ==================== Core Tools ====================
             case TOOL_NAMES.SEARCH_LIBRARY:
                 return await executeSearchLibrary(
                     validatedArgs as SearchLibraryParams,
@@ -154,63 +121,6 @@ export async function executeToolCall(
                     config
                 );
 
-            case TOOL_NAMES.CREATE_NOTE:
-                return await executeCreateNote(
-                    validatedArgs as CreateNoteParams,
-                    config
-                );
-
-            case TOOL_NAMES.ADD_TO_CONTEXT:
-                return await executeAddToContext(
-                    validatedArgs as AddToContextParams,
-                    config
-                );
-
-            case TOOL_NAMES.REMOVE_FROM_CONTEXT:
-                return await executeRemoveFromContext(
-                    validatedArgs as RemoveFromContextParams,
-                    config
-                );
-
-            case TOOL_NAMES.LIST_CONTEXT:
-                return await executeListContext(config);
-
-            case TOOL_NAMES.LIST_TABLES:
-                return await executeListTables(
-                    validatedArgs as ListTablesParams,
-                    config
-                );
-
-            case TOOL_NAMES.CREATE_TABLE:
-                return await executeCreateTable(
-                    validatedArgs as CreateTableParams,
-                    config
-                );
-
-            case TOOL_NAMES.ADD_TO_TABLE:
-                return await executeAddToTable(
-                    validatedArgs as AddToTableParams,
-                    config
-                );
-
-            case TOOL_NAMES.CREATE_TABLE_COLUMN:
-                return await executeCreateTableColumn(
-                    validatedArgs as CreateTableColumnParams,
-                    config
-                );
-
-            case TOOL_NAMES.GENERATE_TABLE_DATA:
-                return await executeGenerateTableData(
-                    validatedArgs as GenerateTableDataParams,
-                    config
-                );
-
-            case TOOL_NAMES.READ_TABLE:
-                return await executeReadTable(
-                    validatedArgs as ReadTableParams,
-                    config
-                );
-
             case TOOL_NAMES.SEARCH_EXTERNAL:
                 return await executeSearchExternal(
                     validatedArgs as SearchExternalParams,
@@ -218,77 +128,14 @@ export async function executeToolCall(
                 );
 
             case TOOL_NAMES.IMPORT_PAPER:
-                const { paper_id, trigger_ocr } = validatedArgs as ImportPaperParams;
                 return await executeImportPaper(
-                    { paper_id, trigger_ocr },
+                    validatedArgs as ImportPaperParams,
                     config
                 );
 
-            case TOOL_NAMES.FIND_COLLECTION:
-                return await executeFindCollection(
-                    validatedArgs as FindCollectionParams,
-                    config
-                );
-
-            case TOOL_NAMES.MOVE_ITEM:
-                return await executeMoveItem(
-                    validatedArgs as MoveItemParams,
-                    config
-                );
-
-            case TOOL_NAMES.REMOVE_ITEM_FROM_COLLECTION:
-                return await executeRemoveItemFromCollection(
-                    validatedArgs as RemoveItemFromCollectionParams,
-                    config
-                );
-
-            case TOOL_NAMES.CREATE_COLLECTION:
-                return await executeCreateCollection(
-                    validatedArgs as CreateCollectionParams,
-                    config
-                );
-
-            case TOOL_NAMES.LIST_COLLECTION:
-                return await executeListCollection(
-                    validatedArgs as ListCollectionParams,
-                    config
-                );
-
-            // Web Tools
-            case TOOL_NAMES.SEARCH_WEB:
-                return await executeSearchWeb(
-                    validatedArgs as SearchWebParams,
-                    config
-                );
-            case TOOL_NAMES.READ_WEBPAGE:
-                return await executeReadWebPage(
-                    validatedArgs as ReadWebPageParams,
-                    config
-                );
-
-            // Citation Tools
-            case TOOL_NAMES.GET_CITATIONS:
-                return await executeGetCitations(
-                    validatedArgs as GetCitationsParams,
-                    config
-                );
-            case TOOL_NAMES.GET_REFERENCES:
-                return await executeGetReferences(
-                    validatedArgs as GetReferencesParams,
-                    config
-                );
-
-            // Tag Tools
             case TOOL_NAMES.GENERATE_ITEM_TAGS:
                 return await executeGenerateItemTags(
                     validatedArgs as GenerateItemTagsParams,
-                    config
-                );
-
-            // Note Editing
-            case TOOL_NAMES.EDIT_NOTE:
-                return await executeEditNote(
-                    validatedArgs as EditNoteParams,
                     config
                 );
 
@@ -431,19 +278,9 @@ export function getAgentConfigFromPrefs(): AgentConfig {
         Zotero.debug(`[seerai] Error reading agent config prefs: ${e}`);
     }
 
-    // ... existing code ...
-
     return config;
 }
 
-/**
- * Check tool permission
- * Returns true if allowed, false if denied
- */
-/**
- * Check tool permission
- * Returns true if allowed, false if denied
- */
 /**
  * Check tool permission
  * Returns true if allowed, false if denied
@@ -488,13 +325,8 @@ async function checkToolPermission(
             }
         }
 
-        // If we get here with an unknown permission string, it's safer to deny or throw.
-        // However, if it defaulted to "allow" above, it would have returned already.
-        // So this covers cases where the user explicitly put unknown garbage in the settings.
         Zotero.debug(`[seerai] Unknown permission setting '${permission}' for tool '${toolName}'. Defaulting to DENY.`);
         throw new Error(`Unknown permission setting '${permission}'.`);
-
-
 
     } catch (e) {
         Zotero.debug(`[seerai] Error checking permission for ${toolName}: ${e}`);

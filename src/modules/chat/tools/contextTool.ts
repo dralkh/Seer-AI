@@ -42,7 +42,7 @@ export async function executeContext(
 /**
  * Execute add_to_context tool
  */
-export async function executeAddToContext(
+async function executeAddToContext(
     params: AddToContextParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -155,7 +155,7 @@ export async function executeAddToContext(
 /**
  * Execute remove_from_context tool
  */
-export async function executeRemoveFromContext(
+async function executeRemoveFromContext(
     params: RemoveFromContextParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -202,7 +202,7 @@ export async function executeRemoveFromContext(
 /**
  * Execute list_context tool
  */
-export async function executeListContext(
+async function executeListContext(
     _config: AgentConfig
 ): Promise<ToolResult> {
     try {

@@ -137,7 +137,7 @@ function markdownToHtml(markdown: string): string {
 /**
  * Execute create_note tool
  */
-export async function executeCreateNote(
+async function executeCreateNote(
     params: CreateNoteParams,
     _config: AgentConfig
 ): Promise<ToolResult> {
@@ -255,7 +255,7 @@ export async function executeCreateNote(
  * Execute edit_note tool
  * Applies one or more edit operations to an existing note
  */
-export async function executeEditNote(
+async function executeEditNote(
     params: EditNoteParams,
     _config: AgentConfig
 ): Promise<ToolResult> {

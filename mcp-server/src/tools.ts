@@ -1,12 +1,13 @@
 /**
  * MCP Tool Definitions
  * 
- * Defines all 20 Seer-AI tools in MCP format.
+ * Defines all Seer-AI tools in MCP format (Core and Consolidated).
  */
 
 import { z } from "zod";
 
-// Tool parameter schemas
+// ==================== Core Tool Parameter Schemas ====================
+
 const searchLibraryParams = z.object({
     query: z.string().describe("Search query for titles, authors, abstracts, and full text"),
     filters: z.object({
@@ -32,61 +33,6 @@ const readItemContentParams = z.object({
     max_length: z.number().default(0).optional().describe("Max content length (0 = no limit)"),
 });
 
-const createNoteParams = z.object({
-    parent_item_id: z.number().optional().describe("Parent item ID for attachment"),
-    collection_id: z.number().optional().describe("Collection ID for standalone note"),
-    title: z.string().describe("Note title"),
-    content: z.string().describe("Note content (markdown supported)"),
-    tags: z.array(z.string()).optional().describe("Tags to add"),
-});
-
-const editNoteParams = z.object({
-    note_id: z.number().describe("ID of the note to edit"),
-    operations: z.array(z.object({
-        type: z.enum(["replace", "insert", "append", "prepend", "delete"]).describe("Operation type"),
-        search: z.string().optional().describe("Text to find (for replace/delete)"),
-        content: z.string().optional().describe("Content to insert/append/replace with"),
-        position: z.string().optional().describe("Position for insert: 'start', 'end', or HTML tag"),
-        replace_all: z.boolean().optional().describe("Replace all occurrences"),
-    })).describe("Edit operations to apply"),
-    convert_markdown: z.boolean().default(true).optional().describe("Convert markdown to HTML"),
-});
-
-const contextItemParams = z.object({
-    items: z.array(z.object({
-        type: z.enum(["paper", "collection", "tag", "author", "table"]),
-        id: z.union([z.number(), z.string()]),
-        name: z.string().optional(),
-    })).describe("Items to add/remove"),
-});
-
-const tableIdParams = z.object({
-    table_id: z.string().optional().describe("Table ID"),
-    include_data: z.boolean().default(false).optional().describe("Include row data"),
-});
-
-const createTableParams = z.object({
-    name: z.string().describe("Table name"),
-    item_ids: z.array(z.number()).optional().describe("Initial paper IDs"),
-});
-
-const addToTableParams = z.object({
-    table_id: z.string().describe("Table ID"),
-    item_ids: z.array(z.number()).describe("Paper IDs to add"),
-});
-
-const createTableColumnParams = z.object({
-    table_id: z.string().describe("Table ID"),
-    column_name: z.string().describe("Column name"),
-    ai_prompt: z.string().describe("AI prompt for generating data"),
-});
-
-const generateTableDataParams = z.object({
-    table_id: z.string().describe("Table ID"),
-    column_id: z.string().optional().describe("Specific column ID"),
-    item_ids: z.array(z.number()).optional().describe("Specific paper IDs"),
-});
-
 const searchExternalParams = z.object({
     query: z.string().describe("Search query"),
     year: z.string().optional().describe("Year range (e.g., '2020-2024')"),
@@ -100,35 +46,172 @@ const importPaperParams = z.object({
     trigger_ocr: z.boolean().default(false).optional().describe("Trigger OCR after import"),
 });
 
-const moveItemParams = z.object({
-    item_id: z.number().describe("Item ID to move"),
-    target_collection_id: z.number().describe("Target collection ID"),
-    remove_from_others: z.boolean().default(false).optional().describe("Remove from other collections"),
-});
+// ==================== Consolidated Tool Parameter Schemas ====================
 
-const removeItemFromCollectionParams = z.object({
-    item_id: z.number().describe("Item ID"),
-    collection_id: z.number().describe("Collection ID"),
-});
+const contextParams = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("list") }),
+    z.object({
+        action: z.literal("add"),
+        items: z.array(z.object({
+            type: z.enum(["paper", "tag", "author", "collection", "topic", "table"]),
+            id: z.union([z.number(), z.string()]).optional(),
+            name: z.string().optional(),
+        })).min(1).describe("Items to add to context"),
+    }),
+    z.object({
+        action: z.literal("remove"),
+        items: z.array(z.object({
+            type: z.enum(["paper", "tag", "author", "collection", "topic", "table"]),
+            id: z.union([z.number(), z.string()]).optional(),
+        })).min(1).describe("Items to remove from context"),
+    }),
+]);
 
-const findCollectionParams = z.object({
-    name: z.string().describe("Collection name to search"),
-    library_id: z.number().optional().describe("Library ID"),
-    parent_collection_id: z.number().optional().describe("Parent collection ID"),
-});
+const collectionParams = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("find"),
+        name: z.string().min(1).describe("Collection name to search for"),
+        library_id: z.number().optional(),
+        parent_id: z.number().optional(),
+    }),
+    z.object({
+        action: z.literal("create"),
+        name: z.string().min(1).describe("Name for new collection"),
+        parent_id: z.number().optional(),
+        library_id: z.number().optional(),
+    }),
+    z.object({
+        action: z.literal("list"),
+        collection_id: z.number().describe("Collection ID to list"),
+    }),
+    z.object({
+        action: z.literal("add_item"),
+        collection_id: z.number().describe("Target collection ID"),
+        item_ids: z.array(z.number()).min(1).describe("Item IDs to add"),
+        remove_from_others: z.boolean().default(false).optional(),
+    }),
+    z.object({
+        action: z.literal("remove_item"),
+        collection_id: z.number().describe("Collection ID"),
+        item_ids: z.array(z.number()).min(1).describe("Item IDs to remove"),
+    }),
+]);
 
-const createCollectionParams = z.object({
-    name: z.string().describe("Collection name"),
-    parent_collection_id: z.number().optional().describe("Parent collection ID"),
-    library_id: z.number().optional().describe("Library ID"),
-});
+const tableParams = z.discriminatedUnion("action", [
+    z.object({ action: z.literal("list") }),
+    z.object({
+        action: z.literal("create"),
+        name: z.string().min(1).describe("Table name"),
+        paper_ids: z.array(z.number()).optional().describe("Initial papers"),
+    }),
+    z.object({
+        action: z.literal("add_papers"),
+        table_id: z.string().min(1).describe("Table ID"),
+        paper_ids: z.array(z.number()).min(1).describe("Paper IDs to add"),
+    }),
+    z.object({
+        action: z.literal("add_column"),
+        table_id: z.string().min(1).describe("Table ID"),
+        column_name: z.string().min(1).describe("Column name"),
+        ai_prompt: z.string().min(1).describe("AI prompt for data generation"),
+    }),
+    z.object({
+        action: z.literal("generate"),
+        table_id: z.string().min(1).describe("Table ID"),
+        column_id: z.string().optional(),
+        item_ids: z.array(z.number()).optional(),
+    }),
+    z.object({
+        action: z.literal("read"),
+        table_id: z.string().optional().describe("Table ID (most recent if omitted)"),
+        include_data: z.boolean().default(true).optional(),
+    }),
+]);
 
-const listCollectionParams = z.object({
-    collection_id: z.number().describe("Collection ID"),
-});
+const noteParams = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("create"),
+        parent_item_id: z.number().optional(),
+        collection_id: z.number().optional(),
+        title: z.string().min(1).describe("Note title"),
+        content: z.string().min(1).describe("Note content (markdown)"),
+        tags: z.array(z.string()).optional(),
+    }),
+    z.object({
+        action: z.literal("edit"),
+        note_id: z.number().describe("Note ID to edit"),
+        operations: z.array(z.object({
+            type: z.enum(["replace", "insert", "append", "prepend", "delete"]),
+            search: z.string().optional(),
+            content: z.string().optional(),
+            position: z.string().optional(),
+            replace_all: z.boolean().default(false).optional(),
+        })).min(1),
+        convert_markdown: z.boolean().default(true).optional(),
+    }),
+]);
 
-// Tool definitions
+const relatedPapersParams = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("citations"),
+        paper_id: z.string().describe("Semantic Scholar paper ID"),
+        limit: z.number().min(1).max(50).default(10).optional(),
+    }),
+    z.object({
+        action: z.literal("references"),
+        paper_id: z.string().describe("Semantic Scholar paper ID"),
+        limit: z.number().min(1).max(50).default(10).optional(),
+    }),
+]);
+
+const webParams = z.discriminatedUnion("action", [
+    z.object({
+        action: z.literal("search"),
+        query: z.string().min(1).describe("Search query"),
+        limit: z.number().min(1).max(20).default(5).optional(),
+    }),
+    z.object({
+        action: z.literal("read"),
+        url: z.string().describe("URL to read"),
+    }),
+]);
+
+// ==================== Tool Definitions ====================
+
 export const TOOL_DEFINITIONS = [
+    // ==================== Consolidated Tools ====================
+    {
+        name: "context",
+        description: "Manage conversation context. Add items (papers, tags, collections) to focus the conversation, remove them, or list current context.",
+        inputSchema: contextParams,
+    },
+    {
+        name: "collection",
+        description: "Manage Zotero collections. Find, create, list contents, or add/remove items from collections.",
+        inputSchema: collectionParams,
+    },
+    {
+        name: "table",
+        description: "Manage research analysis tables. List tables, create new tables, add papers, add columns, generate AI data, or read table contents.",
+        inputSchema: tableParams,
+    },
+    {
+        name: "note",
+        description: "Create or edit Zotero notes. Create new notes attached to items/collections, or edit existing notes with operations.",
+        inputSchema: noteParams,
+    },
+    {
+        name: "related_papers",
+        description: "Find related papers via citations (forward) or references (backward).",
+        inputSchema: relatedPapersParams,
+    },
+    {
+        name: "web",
+        description: "Search the web or read webpage content.",
+        inputSchema: webParams,
+    },
+
+    // ==================== Core Tools ====================
     {
         name: "search_library",
         description: "Search the Zotero library for papers matching a query. Returns titles, authors, and IDs.",
@@ -145,61 +228,6 @@ export const TOOL_DEFINITIONS = [
         inputSchema: readItemContentParams,
     },
     {
-        name: "create_note",
-        description: "Create a new note in Zotero, optionally attached to a paper.",
-        inputSchema: createNoteParams,
-    },
-    {
-        name: "edit_note",
-        description: "Edit an existing Zotero note. Supports replace, insert, append, prepend, and delete operations.",
-        inputSchema: editNoteParams,
-    },
-    {
-        name: "add_to_context",
-        description: "Add papers, collections, or tables to the conversation context.",
-        inputSchema: contextItemParams,
-    },
-    {
-        name: "remove_from_context",
-        description: "Remove items from the conversation context.",
-        inputSchema: contextItemParams,
-    },
-    {
-        name: "list_context",
-        description: "List all items currently in the conversation context.",
-        inputSchema: z.object({}),
-    },
-    {
-        name: "list_tables",
-        description: "List all analysis tables in Zotero.",
-        inputSchema: z.object({}),
-    },
-    {
-        name: "create_table",
-        description: "Create a new analysis table for comparing papers.",
-        inputSchema: createTableParams,
-    },
-    {
-        name: "add_to_table",
-        description: "Add papers to an existing table.",
-        inputSchema: addToTableParams,
-    },
-    {
-        name: "create_table_column",
-        description: "Add an AI-generated column to a table.",
-        inputSchema: createTableColumnParams,
-    },
-    {
-        name: "generate_table_data",
-        description: "Generate AI data for table columns.",
-        inputSchema: generateTableDataParams,
-    },
-    {
-        name: "read_table",
-        description: "Read the contents of a table.",
-        inputSchema: tableIdParams,
-    },
-    {
         name: "search_external",
         description: "Search Semantic Scholar for external papers.",
         inputSchema: searchExternalParams,
@@ -210,64 +238,8 @@ export const TOOL_DEFINITIONS = [
         inputSchema: importPaperParams,
     },
     {
-        name: "move_item",
-        description: "Move a paper to a collection.",
-        inputSchema: moveItemParams,
-    },
-    {
-        name: "remove_item_from_collection",
-        description: "Remove a paper from a collection (paper stays in library).",
-        inputSchema: removeItemFromCollectionParams,
-    },
-    {
-        name: "find_collection",
-        description: "Find a collection by name.",
-        inputSchema: findCollectionParams,
-    },
-    {
-        name: "create_collection",
-        description: "Create a new collection in Zotero.",
-        inputSchema: createCollectionParams,
-    },
-    {
-        name: "list_collection",
-        description: "List all items in a collection.",
-        inputSchema: listCollectionParams,
-    },
-    {
-        name: "search_web",
-        description: "Search the general web for information. Use this for finding documentation, blogs, GitHub repositories, or non-academic information.",
-        inputSchema: z.object({
-            query: z.string().describe("Search query"),
-            limit: z.number().default(5).optional().describe("Max results (default 5)")
-        }),
-    },
-    {
-        name: "read_webpage",
-        description: "Read the content of any webpage URL as clean markdown. Use this to read blogs, documentation, or news articles found via search_web.",
-        inputSchema: z.object({
-            url: z.string().describe("The URL to read")
-        }),
-    },
-    {
-        name: "get_citations",
-        description: "Find papers that cite a specific paper (Forward Citations). Use this to find newer research that builds upon a key paper.",
-        inputSchema: z.object({
-            paper_id: z.string().describe("Semantic Scholar Paper ID"),
-            limit: z.number().default(10).optional().describe("Max results (default 10)")
-        }),
-    },
-    {
-        name: "get_references",
-        description: "Find papers cited by a specific paper (Backward References). Use this to understand the foundational work that a paper is based on.",
-        inputSchema: z.object({
-            paper_id: z.string().describe("Semantic Scholar Paper ID"),
-            limit: z.number().default(10).optional().describe("Max results (default 10)")
-        }),
-    },
-    {
         name: "generate_item_tags",
-        description: "Generate AI-powered tags for a Zotero item based on its content (notes, PDF, or metadata). Tags are automatically applied to the item.",
+        description: "Generate AI-powered tags for a Zotero item based on its content.",
         inputSchema: z.object({
             item_id: z.number().describe("Zotero item ID to generate tags for")
         }),
