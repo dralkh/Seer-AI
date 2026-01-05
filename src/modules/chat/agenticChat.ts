@@ -50,7 +50,8 @@ export function createToolProcessUI(doc: Document): {
     container: HTMLElement;
     setThinking: () => void;
     setExecutingTool: (toolName: string) => void;
-    setCompleted: (count: number) => void;
+    setCompleted: (count: number, toolCount?: number) => void;
+    updateProgress: (count: number, toolCount?: number) => void;
     setFailed: (error: string) => void;
 } {
     const details = doc.createElement("details");
@@ -166,6 +167,7 @@ export function createToolProcessUI(doc: Document): {
         if (!listContainer.firstChild) {
             details.open = false;
         }
+        // Force open if user explicitly keeps it open should be handled by caller persistence
     };
 
     const setExecutingTool = (toolName: string) => {
@@ -174,16 +176,38 @@ export function createToolProcessUI(doc: Document): {
         icon.textContent = "🔧";
         icon.style.filter = "none";
         icon.style.animation = "pulse 1s infinite";
-        details.open = true; // Auto-expand when a tool is being called for visibility
+        icon.style.animation = "pulse 1s infinite";
+        // Do NOT force open here if we want to respect user's choice, 
+        // BUT user often wants to see new tools. 
+        // Letting persistence handle this in assistant.ts is better.
+        // details.open = true; 
     };
 
-    const setCompleted = (count: number) => {
-        label.textContent = `Completed ${count} analysis turn${count !== 1 ? 's' : ''}`;
+    const setCompleted = (count: number, toolCount?: number) => {
+        if (toolCount !== undefined && toolCount !== count) {
+            label.textContent = `Completed ${toolCount} action${toolCount !== 1 ? 's' : ''} in ${count} turn${count !== 1 ? 's' : ''}`;
+        } else {
+            label.textContent = `Completed ${count} analysis turn${count !== 1 ? 's' : ''}`;
+        }
         icon.textContent = "✓";
         icon.style.filter = "none";
         icon.style.color = "var(--accent-green, #34C759)";
         icon.style.animation = "none";
         // Keep current open state
+    };
+
+    const updateProgress = (count: number, toolCount?: number) => {
+        if (toolCount !== undefined && toolCount !== count) {
+            label.textContent = `Processing ${toolCount} action${toolCount !== 1 ? 's' : ''} in ${count} turn${count !== 1 ? 's' : ''}`;
+        } else {
+            label.textContent = `Processing ${count} analysis turn${count !== 1 ? 's' : ''}`;
+        }
+        // Keep executing icon or completed icon? 
+        // If updating progress, it means we are running but maybe not currently executing a tool (e.g. between turns)
+        icon.textContent = "⚡";
+        icon.style.filter = "none";
+        icon.style.color = "var(--text-secondary)"; // Neutral color
+        icon.style.animation = "pulse 2s infinite";
     };
 
     const setFailed = (error: string) => {
@@ -196,7 +220,7 @@ export function createToolProcessUI(doc: Document): {
         details.open = true; // Auto-expand on failure
     };
 
-    return { container: details, setThinking, setExecutingTool, setCompleted, setFailed };
+    return { container: details, setThinking, setExecutingTool, setCompleted, updateProgress, setFailed };
 }
 
 /**
@@ -501,10 +525,10 @@ export async function handleAgenticChat(
             messages.push(assistantToolMessage);
 
             // Execute each tool call
-            // Sequential execution to ensure permission dialogs work correctly and don't overlap
+            // Parallel execution for speed - permission dialogs will queue naturally in Zotero
             const toolResults: { toolCall: ToolCall; result: ToolResult }[] = [];
 
-            for (const toolCall of toolCallsReceived) {
+            await Promise.all(toolCallsReceived.map(async (toolCall) => {
                 // Inform observer tool call started
                 observer.onToolCallStarted(toolCall);
 
@@ -518,7 +542,6 @@ export async function handleAgenticChat(
                 );
 
                 // Execute the tool
-                // This awaits the result, including any permission dialog interaction
                 const result = await executeToolCall(toolCall, agentConfig);
 
                 // End tool span with result
@@ -532,12 +555,12 @@ export async function handleAgenticChat(
                 observer.onToolCallCompleted(toolCall, result);
 
                 toolResults.push({ toolCall, result });
+            }));
 
-                // Check for abortion after each tool execution
-                if (openAIService.isAbortedState()) {
-                    Zotero.debug("[seerai] Agent loop aborted after tool execution");
-                    throw new Error("Request was cancelled");
-                }
+            // Check for abortion after all tool executions
+            if (openAIService.isAbortedState()) {
+                Zotero.debug("[seerai] Agent loop aborted after tool execution");
+                throw new Error("Request was cancelled");
             }
 
             // Add results to history with enhanced error feedback (Reflexion pattern - agentic.md Section 2.1)

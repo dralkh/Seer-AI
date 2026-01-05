@@ -117,11 +117,13 @@ interface AgentSession {
   messagesArea: HTMLElement | null;
   contentDiv: HTMLElement | null;
   toolContainer: HTMLElement | null; // Keeps track of the tool list container for direct access
+  isToolDetailsOpen: boolean; // Persist open/closed state of tool details
   toolProcessState?: {
     container: HTMLElement;
     setThinking: () => void;
     setExecutingTool: (toolName: string) => void;
-    setCompleted: (count: number) => void;
+    setCompleted: (count: number, toolCount?: number) => void;
+    updateProgress: (count: number, toolCount?: number) => void;
     setFailed: (error: string) => void;
   };
 }
@@ -999,6 +1001,9 @@ export class Assistant {
   private static isStreaming: boolean = false;
   private static lastRenderTime: number = 0;
   private static lastRenderValue: string = "";
+  private static lastRenderedItemId: number = 0;
+  private static lastRenderedTab: string = "";
+  private static lastRenderedContainer: HTMLElement | null = null;
   private static readonly RENDER_THROTTLE_MS: number = 60;
 
   /**
@@ -1039,7 +1044,7 @@ export class Assistant {
         currentContainer = body;
         currentItem = item;
 
-        this.renderInterface(body, item);
+        this.renderInterface(body, item, true);
         const stateManager = getChatStateManager();
         setSectionSummary(stateManager.getSummary());
       },
@@ -1351,7 +1356,22 @@ export class Assistant {
   private static async renderInterface(
     container: HTMLElement,
     item: Zotero.Item,
+    skipIfSame: boolean = false,
   ) {
+    if (skipIfSame &&
+      this.lastRenderedItemId === item.id &&
+      this.lastRenderedTab === activeTab &&
+      this.lastRenderedContainer === container) {
+      // Optimization: avoid full re-render if the active context hasn't changed.
+      // This prevents Zotero's onRender events (from tool metadata updates)
+      // from clearing the DOM and closing user interaction elements like dropdowns.
+      return;
+    }
+
+    this.lastRenderedItemId = item.id;
+    this.lastRenderedTab = activeTab;
+    this.lastRenderedContainer = container;
+
     container.innerHTML = "";
     const doc = container.ownerDocument!;
 
@@ -1755,7 +1775,8 @@ export class Assistant {
           activeAgentSession.fullResponse,
           "",
           false,
-          activeAgentSession.toolResults
+          activeAgentSession.toolResults,
+          activeAgentSession.iterationCount
         );
         const contentDiv = streamingDiv.querySelector(
           "[data-content]",
@@ -1803,8 +1824,12 @@ export class Assistant {
               icon.style.animation = "pulse 1s infinite";
             }
           };
-          const setCompleted = (count: number) => {
-            if (label) label.textContent = `Completed ${count} analysis turn${count !== 1 ? 's' : ''}`;
+          const setCompleted = (count: number, toolCount?: number) => {
+            if (toolCount !== undefined && toolCount !== count) {
+              if (label) label.textContent = `Completed ${toolCount} action${toolCount !== 1 ? 's' : ''} in ${count} turn${count !== 1 ? 's' : ''}`;
+            } else {
+              if (label) label.textContent = `Completed ${count} analysis turn${count !== 1 ? 's' : ''}`;
+            }
             if (icon) {
               icon.textContent = "✓";
               icon.style.animation = "none";
@@ -1823,16 +1848,49 @@ export class Assistant {
             }
             (toolProcessContainer as any).open = true;
           };
+          const updateProgress = (count: number, toolCount?: number) => {
+            if (label) {
+              if (toolCount !== undefined && toolCount !== count) {
+                label.textContent = `Processing ${toolCount} action${toolCount !== 1 ? 's' : ''} in ${count} turn${count !== 1 ? 's' : ''}`;
+              } else {
+                label.textContent = `Processing ${count} analysis turn${count !== 1 ? 's' : ''}`;
+              }
+            }
+            if (icon) {
+              icon.textContent = "⚡";
+              icon.style.filter = "none";
+              icon.style.color = "var(--text-secondary)";
+              icon.style.animation = "pulse 2s infinite";
+            }
+          };
 
-          activeAgentSession.toolProcessState = { container: toolProcessContainer, setThinking, setExecutingTool, setCompleted, setFailed };
+          activeAgentSession.toolProcessState = { container: toolProcessContainer, setThinking, setExecutingTool, setCompleted, updateProgress, setFailed };
           activeAgentSession.toolContainer = listContainer;
+
+          // Restore persisted open state
+          if (activeAgentSession.isToolDetailsOpen) {
+            (toolProcessContainer as any).open = true;
+          }
+
+          // Add listener to track state changes
+          toolProcessContainer.addEventListener("toggle", (e: Event) => {
+            if (activeAgentSession) {
+              activeAgentSession.isToolDetailsOpen = (e.target as HTMLDetailsElement).open;
+            }
+          });
 
           // Set appropriate state indicator
           if (activeAgentSession.isThinking || activeAgentSession.toolResults.some(tr => !tr.result)) {
+            // Still thinking or mid-tool
+            const finalCount = activeAgentSession.iterationCount || 1;
+            const toolCount = activeAgentSession.toolResults.length;
+            updateProgress(finalCount, toolCount);
+          } else if (activeAgentSession.iterationCount > 0 || activeAgentSession.toolResults.length > 0) {
             setThinking();
           } else if (activeAgentSession.iterationCount > 0 || activeAgentSession.toolResults.length > 0) {
-            const finalCount = activeAgentSession.iterationCount || activeAgentSession.toolResults.length;
-            setCompleted(finalCount);
+            const finalCount = activeAgentSession.iterationCount || 0;
+            const toolCount = activeAgentSession.toolResults.length;
+            setCompleted(finalCount, toolCount);
           }
 
           // CRITICAL: Update the uiElement references in toolResults so observer updates THIS element
@@ -9669,7 +9727,22 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
       table.generatedData = {};
     }
 
-    // Process each item/column combination
+    // Get max concurrent from settings
+    const maxConcurrent =
+      (Zotero.Prefs.get(
+        `${addon.data.config.prefsPrefix}.aiMaxConcurrent`,
+      ) as number) || 5;
+    Zotero.debug(`[seerai] Table generation max concurrent: ${maxConcurrent}`);
+
+    // Build task list
+    interface GenerationTask {
+      paperId: number;
+      col: TableColumn;
+      item: Zotero.Item;
+      noteContent: string;
+    }
+    const tasks: GenerationTask[] = [];
+
     for (const paperId of items) {
       const item = Zotero.Items.get(paperId);
       if (!item) {
@@ -9719,38 +9792,52 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
         continue;
       }
 
-      // Generate data for each column
+      // Add tasks for each column
       for (const col of columnsToGenerate) {
-        try {
-          // Create a TableColumn object for the generation
-          const tableCol: TableColumn = {
-            id: col.id,
-            name: col.name,
-            width: col.width || 150,
-            minWidth: col.minWidth || 80,
-            visible: true,
-            sortable: false,
-            resizable: true,
-            type: col.type || 'computed',
-            aiPrompt: col.aiPrompt
-          };
+        const tableCol: TableColumn = {
+          id: col.id,
+          name: col.name,
+          width: col.width || 150,
+          minWidth: col.minWidth || 80,
+          visible: true,
+          sortable: false,
+          resizable: true,
+          type: col.type || 'computed',
+          aiPrompt: col.aiPrompt
+        };
+        tasks.push({ paperId, col: tableCol, item, noteContent });
+      }
+    }
 
-          const content = await this.generateColumnContentFromText(
-            item,
-            tableCol,
-            noteContent
-          );
+    // Process tasks in batches using maxConcurrent
+    for (let i = 0; i < tasks.length; i += maxConcurrent) {
+      const batch = tasks.slice(i, i + maxConcurrent);
+      const results = await Promise.all(
+        batch.map(async (task) => {
+          try {
+            const content = await this.generateColumnContentFromText(
+              task.item,
+              task.col,
+              task.noteContent
+            );
+            return { task, content, error: null };
+          } catch (e) {
+            return { task, content: null, error: `Error generating ${task.col.name} for item ${task.paperId}: ${e}` };
+          }
+        })
+      );
 
-          table.generatedData![paperId]![col.id] = content;
+      // Apply results
+      for (const result of results) {
+        if (result.error) {
+          errors.push(result.error);
+          Zotero.debug(`[seerai] ${result.error}`);
+        } else if (result.content) {
+          table.generatedData![result.task.paperId]![result.task.col.id] = result.content;
           generatedCount++;
-
           Zotero.debug(
-            `[seerai] Generated: item=${paperId} col=${col.name} length=${content.length}`
+            `[seerai] Generated: item=${result.task.paperId} col=${result.task.col.name} length=${result.content.length}`
           );
-        } catch (e) {
-          const errMsg = `Error generating ${col.name} for item ${paperId}: ${e}`;
-          errors.push(errMsg);
-          Zotero.debug(`[seerai] ${errMsg}`);
         }
       }
     }
@@ -19420,6 +19507,7 @@ ${tableRows}  </tbody>
       messagesArea: messagesArea,
       contentDiv: contentDiv,
       toolContainer: null,
+      isToolDetailsOpen: false, // Default closed until tools run
     };
 
     const session = activeAgentSession;
@@ -19502,6 +19590,17 @@ ${tableRows}  </tbody>
             // Set initial state
             processUI.setThinking();
 
+            // Auto-open on first tool
+            (processUI.container as any).open = true;
+            session.isToolDetailsOpen = true;
+
+            // Track toggles
+            processUI.container.addEventListener("toggle", (e: Event) => {
+              if (session) {
+                session.isToolDetailsOpen = (e.target as HTMLDetailsElement).open;
+              }
+            });
+
             // Store the list container for appending tool cards
             // The list container is the div inside the details
             session.toolContainer = processUI.container.querySelector(".tool-list-container") as HTMLElement;
@@ -19536,6 +19635,11 @@ ${tableRows}  </tbody>
           session.toolContainer.replaceChild(newUI, tr.uiElement);
           tr.uiElement = newUI;
           smartScrollToBottom();
+        }
+
+        // CRITICAL: Update the counter label in real-time
+        if (session.toolProcessState) {
+          session.toolProcessState.updateProgress(session.iterationCount, session.toolResults.length);
         }
       },
       onMessageUpdate: (content: string) => {
@@ -19597,10 +19701,13 @@ ${tableRows}  </tbody>
 
         // Finalize tool process UI if exists
         if (session.toolProcessState) {
-          // Use iterationCount if available, otherwise fallback to tool results length
-          // This aligns UI with the reasoning turns (Steps) performed by the model
-          const finalCount = iterationCount !== undefined ? iterationCount : session.toolResults.length;
-          session.toolProcessState.setCompleted(finalCount);
+          // Use the authoritative iteration count from handleAgenticChat
+          // This fixes race condition where onIterationStarted increments count
+          // for iterations that don't complete with tool calls
+          const finalCount = iterationCount !== undefined ? iterationCount : session.iterationCount;
+          session.iterationCount = finalCount; // Sync session state to authoritative value
+          const toolCount = session.toolResults.length;
+          session.toolProcessState.setCompleted(finalCount, toolCount);
         }
 
         const assistantMsg: ChatMessage = {
@@ -20408,8 +20515,9 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
       });
 
       // Set state to completed
-      const finalCount = iterationCount !== undefined ? iterationCount : toolResults.length;
-      setCompleted(finalCount);
+      const finalCount = iterationCount !== undefined ? iterationCount : 0;
+      const toolCount = toolResults ? toolResults.length : 0;
+      setCompleted(finalCount, toolCount);
 
       msgDiv.appendChild(container);
     }
@@ -20841,7 +20949,7 @@ Be concise, accurate, and helpful. When referencing papers, cite them by title o
       : msg.role === "error"
         ? "Error"
         : "Assistant";
-    this.appendMessage(container, sender, msg.content, msg.id, isLastUserMsg, msg.toolResults);
+    this.appendMessage(container, sender, msg.content, msg.id, isLastUserMsg, msg.toolResults, msg.iterationCount);
   }
 
   /**

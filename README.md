@@ -13,7 +13,7 @@
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" />
   </a>
   <a href="https://github.com/dralkh/seerai/releases">
-    <img src="https://img.shields.io/badge/Version-1.4.0-blue" />
+    <img src="https://img.shields.io/badge/Version-1.5.0-blue" />
   </a>
 </p>
 
@@ -55,7 +55,7 @@
   - `Shift+Enter`: Send message
 
 ### Semantic Search & Discovery
-- **Web Search**: Integrated Firecrawl support for finding full-text content.
+- **Web Search**: Integrated Firecrawl & Tavily support for finding high-quality full-text content.
 - **Semantic Scholar Agent**: Advanced paper search with:
   - **Advanced Filters**: Fine-tune results by Year, Venue, and Citation Count.
   - **AI Insights Config**: Configure insight generation directly from the search panel.
@@ -69,11 +69,13 @@
 - **Rich Tool Suite**:
   - **Search Tool**: Search through your library with advanced filters.
   - **Collection Tool**: Manage collections and move items.
-  - **Note Tool**: Read, create, and modify item notes.
+  - **Note Tools**: Read, create, and **edit existing** item notes for seamless research updates.
+  - **Tag Tool**: Automatically generate and apply relevant tags to your research.
   - **Read Tool**: Extract text from PDFs and items for deep analysis.
   - **Citation Tool**: Generate citations and bibliographies.
   - **Table Tool**: Interact with and generate data for your Paper Tables.
-  - **Web Tool**: Search the web and fetch content using Firecrawl.
+  - **Web Tool**: Search the web and fetch content using Firecrawl or Tavily.
+- **Advanced Orchestration**: Improved tool calling logic and iteration tracking for more robust agent performance.
 - **Model-as-a-Tool**: Seamless integration with LLM tool-calling capabilities.
 
 ### Papers Tables
@@ -154,6 +156,7 @@ Choose your preferred text extraction engine:
 ### 3. Search Integrations
 - **Semantic Scholar**: Add your [API Key](https://www.semanticscholar.org/product/api) for higher rate limits and faster searches.
 - **Firecrawl**: Add [API Key](https://firecrawl.dev) to enable deep web search capabilities - local instance with ([GitHub](https://github.com/firecrawl/firecrawl)).
+- **Tavily**: Add [API Key](https://tavily.com/) for optimized search results tailored for AI agents.
 
 ### 4. MCP Server & API
 Seer-AI now includes a Model Context Protocol (MCP) server and a local API for external integrations.
@@ -215,9 +218,6 @@ Enhanced search functionality to help users find relevant literature more effect
 - **Verifier Button** — One-click verification to check all extracted data against source text.
 - **Confidence Scores** — AI-generated confidence ratings for each extracted data point.
 - **Source Highlighting** — Click a cell to see the exact passage in the paper where the data came from.
-
-### 4. Firecrawl API Integration
-- **URL Discovery** — Usage Firecrawl API for pdf discovery
 
 ### Others
 Citations referencing within tables and chat on generation 

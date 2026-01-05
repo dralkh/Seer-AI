@@ -94,7 +94,8 @@ export function createMessageBubble(
         alignSelf: isUser ? "flex-end" : "flex-start",
         color: textColor,
         boxShadow: "0 1px 2px rgba(0,0,0,0.1)",
-        position: "relative"
+        position: "relative",
+        overflow: "hidden"
     });
 
     // Header with sender and actions
@@ -144,7 +145,13 @@ export function createMessageBubble(
     const contentDiv = doc.createElement("div");
     contentDiv.setAttribute("data-content", "true");
     contentDiv.setAttribute("data-raw", text);
-    Object.assign(contentDiv.style, { lineHeight: "1.5" });
+    Object.assign(contentDiv.style, {
+        lineHeight: "1.5",
+        overflowX: "auto",
+        overflowWrap: "break-word",
+        wordBreak: "break-word",
+        maxWidth: "100%"
+    });
     contentDiv.innerHTML = parseMarkdown(text);
 
     msgDiv.appendChild(headerDiv);

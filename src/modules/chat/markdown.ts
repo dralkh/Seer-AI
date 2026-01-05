@@ -141,11 +141,13 @@ export function parseMarkdown(markdown: string): string {
 
     const flushTable = () => {
         if (inTable && (tableHeader.length > 0 || tableRows.length > 0)) {
-            let tableHtml = '<table style="border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 0.95em;">';
+            // Wrap table in scrollable container to prevent sidebar overflow
+            let tableHtml = '<div style="overflow-x: auto; margin: 8px 0; max-width: 100%;">';
+            tableHtml += '<table style="border-collapse: collapse; width: max-content; min-width: 100%; font-size: 0.85em; table-layout: auto;">';
             if (tableHeader.length > 0) {
                 tableHtml += '<thead><tr>';
                 tableHeader.forEach(cell => {
-                    tableHtml += `<th style="border: 1px solid #ddd; padding: 8px; background: rgba(0,0,0,0.05); text-align: left;">${parseInline(cell.trim())}</th>`;
+                    tableHtml += `<th style="border: 1px solid var(--border-primary, #ddd); padding: 4px 6px; background: var(--background-secondary, rgba(0,0,0,0.05)); text-align: left; white-space: nowrap; font-size: 0.9em;">${parseInline(cell.trim())}</th>`;
                 });
                 tableHtml += '</tr></thead>';
             }
@@ -154,13 +156,14 @@ export function parseMarkdown(markdown: string): string {
                 tableRows.forEach(row => {
                     tableHtml += '<tr>';
                     row.forEach(cell => {
-                        tableHtml += `<td style="border: 1px solid #ddd; padding: 8px;">${parseInline(cell.trim())}</td>`;
+                        tableHtml += `<td style="border: 1px solid var(--border-primary, #ddd); padding: 4px 6px; max-width: 200px; overflow: hidden; text-overflow: ellipsis;">${parseInline(cell.trim())}</td>`;
                     });
                     tableHtml += '</tr>';
                 });
                 tableHtml += '</tbody>';
             }
             tableHtml += '</table>';
+            tableHtml += '</div>';
             htmlParts.push(tableHtml);
             tableHeader = [];
             tableRows = [];
@@ -181,9 +184,9 @@ export function parseMarkdown(markdown: string): string {
                 const uniqueId = `code-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
 
                 htmlParts.push(`
-                    <div style="position: relative; margin: 8px 0;">
+                    <div style="position: relative; margin: 8px 0; max-width: 100%;">
                         ${codeLanguage ? `<div style="position: absolute; top: 0; left: 12px; font-size: 10px; color: #aaa; background: #2d2d2d; padding: 2px 6px; border-radius: 0 0 4px 4px; text-transform: uppercase;">${codeLanguage}</div>` : ''}
-                        <pre style="background: #1e1e1e; color: #d4d4d4; padding: ${codeLanguage ? '28px' : '12px'} 12px 12px; border-radius: 6px; overflow-x: auto; font-family: 'SF Mono', Consolas, monospace; font-size: 0.9em; margin: 0;"><code>${highlightedCode}</code></pre>
+                        <pre style="background: #1e1e1e; color: #d4d4d4; padding: ${codeLanguage ? '28px' : '12px'} 12px 12px; border-radius: 6px; overflow-x: auto; font-family: 'SF Mono', Consolas, monospace; font-size: 0.9em; margin: 0; white-space: pre-wrap; word-break: break-word;"><code>${highlightedCode}</code></pre>
                     </div>
                 `);
                 codeBlockContent = [];
@@ -292,7 +295,6 @@ export function parseMarkdown(markdown: string): string {
 
         // Empty line
         if (line.trim() === '') {
-            flushList();
             flushTable();
             // Add spacing for paragraph breaks
             if (htmlParts.length > 0 && !htmlParts[htmlParts.length - 1].includes('margin')) {
@@ -313,7 +315,7 @@ export function parseMarkdown(markdown: string): string {
 
     // Handle unclosed code block
     if (inCodeBlock && codeBlockContent.length > 0) {
-        htmlParts.push(`<pre style="background: rgba(0,0,0,0.08); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 0.9em; margin: 8px 0;"><code>${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`);
+        htmlParts.push(`<pre style="background: rgba(0,0,0,0.08); padding: 12px; border-radius: 6px; overflow-x: auto; font-family: monospace; font-size: 0.9em; margin: 8px 0; white-space: pre-wrap; word-break: break-word;"><code>${escapeHtml(codeBlockContent.join('\n'))}</code></pre>`);
     }
 
     return htmlParts.join('');
