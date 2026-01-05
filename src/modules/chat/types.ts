@@ -119,6 +119,7 @@ export interface ChatMessage {
     canRetry?: boolean;   // For assistant messages - user can regenerate
     canEdit?: boolean;    // For user messages - can be edited
     toolResults?: { toolCall: any; result?: any }[]; // Persisted tool executions
+    iterationCount?: number; // Total reasoning turns/iterations
 }
 
 // AI Model Configuration - user-defined model settings

@@ -113,6 +113,7 @@ interface AgentSession {
   fullResponse: string;
   toolResults: { toolCall: ToolCall; result?: ToolResult; uiElement?: HTMLElement }[];
   isThinking: boolean;
+  iterationCount: number;
   messagesArea: HTMLElement | null;
   contentDiv: HTMLElement | null;
   toolContainer: HTMLElement | null; // Keeps track of the tool list container for direct access
@@ -1803,7 +1804,7 @@ export class Assistant {
             }
           };
           const setCompleted = (count: number) => {
-            if (label) label.textContent = `Completed ${count} step${count !== 1 ? 's' : ''}`;
+            if (label) label.textContent = `Completed ${count} analysis turn${count !== 1 ? 's' : ''}`;
             if (icon) {
               icon.textContent = "✓";
               icon.style.animation = "none";
@@ -1829,8 +1830,9 @@ export class Assistant {
           // Set appropriate state indicator
           if (activeAgentSession.isThinking || activeAgentSession.toolResults.some(tr => !tr.result)) {
             setThinking();
-          } else if (activeAgentSession.toolResults.length > 0) {
-            setCompleted(activeAgentSession.toolResults.length);
+          } else if (activeAgentSession.iterationCount > 0 || activeAgentSession.toolResults.length > 0) {
+            const finalCount = activeAgentSession.iterationCount || activeAgentSession.toolResults.length;
+            setCompleted(finalCount);
           }
 
           // CRITICAL: Update the uiElement references in toolResults so observer updates THIS element
@@ -19388,13 +19390,21 @@ ${tableRows}  </tbody>
                 <span>Thinking</span>
                 <span class="dot" style="animation: blink 1.4s infinite .2s;">.</span>
                 <span class="dot" style="animation: blink 1.4s infinite .4s;">.</span>
-                <span class="dot" style="animation: blink 1.4s infinite .6s;">.</span>
+    <span class="dot" style="animation: blink 1.4s infinite .6s;">.</span>
             </div>
             <style>
                 @keyframes blink { 0% { opacity: .2; } 20% { opacity: 1; } 100% { opacity: .2; } }
             </style>
         `;
-    const streamingDiv = this.appendMessage(messagesArea, "Assistant", "");
+    const streamingDiv = this.appendMessage(
+      messagesArea,
+      "Assistant",
+      "",
+      undefined,
+      false,
+      undefined,
+      1, // Start at turn 1 for new agent sessions
+    );
     const contentDiv = streamingDiv.querySelector(
       "[data-content]",
     ) as HTMLElement;
@@ -19406,6 +19416,7 @@ ${tableRows}  </tbody>
       fullResponse: "",
       toolResults: [],
       isThinking: true,
+      iterationCount: 1, // Start at turn 1
       messagesArea: messagesArea,
       contentDiv: contentDiv,
       toolContainer: null,
@@ -19466,6 +19477,7 @@ ${tableRows}  </tbody>
       onIterationStarted: (iteration: number) => {
         if (!Assistant.isStreaming) return;
         session.isThinking = true;
+        session.iterationCount = iteration;
 
         if (session.toolProcessState) {
           session.toolProcessState.setThinking();
@@ -19550,7 +19562,7 @@ ${tableRows}  </tbody>
           mdContainer.innerHTML = parseMarkdown(cleanedContent);
         }
       },
-      onComplete: async (content: string) => {
+      onComplete: async (content: string, iterationCount?: number) => {
         // NOTE: Removed early return check for isStreaming - we MUST render final content
         // even if streaming was stopped, otherwise the response is hidden from user
 
@@ -19585,8 +19597,10 @@ ${tableRows}  </tbody>
 
         // Finalize tool process UI if exists
         if (session.toolProcessState) {
-          const count = session.toolResults.length;
-          session.toolProcessState.setCompleted(count);
+          // Use iterationCount if available, otherwise fallback to tool results length
+          // This aligns UI with the reasoning turns (Steps) performed by the model
+          const finalCount = iterationCount !== undefined ? iterationCount : session.toolResults.length;
+          session.toolProcessState.setCompleted(finalCount);
         }
 
         const assistantMsg: ChatMessage = {
@@ -19594,6 +19608,7 @@ ${tableRows}  </tbody>
           role: "assistant",
           content: cleanedContent,
           timestamp: new Date(),
+          iterationCount: session.iterationCount,
           toolResults: session.toolResults.length > 0 ? session.toolResults : undefined,
         };
         conversationMessages.push(assistantMsg);
@@ -20027,6 +20042,7 @@ Research & Paper Discovery:
 ${webContext ? " When using web search results, cite the source URL." : ""}`;
 
 
+
       // Merge pasted images with Zotero item images
       const manuallyPastedParts: VisionMessageContentPart[] = pastedImages.map(
         (img) => ({
@@ -20245,6 +20261,7 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
     msgId?: string,
     isLastUserMsg?: boolean,
     toolResults?: { toolCall: ToolCall; result?: ToolResult }[],
+    iterationCount?: number,
   ): HTMLElement {
     const doc = container.ownerDocument!;
     const isUser = sender === "You";
@@ -20391,7 +20408,8 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
       });
 
       // Set state to completed
-      setCompleted(toolResults.length);
+      const finalCount = iterationCount !== undefined ? iterationCount : toolResults.length;
+      setCompleted(finalCount);
 
       msgDiv.appendChild(container);
     }
@@ -20628,6 +20646,7 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
         msg.id,
         isLastUserMsg,
         msg.toolResults, // Pass toolResults so they're re-rendered on tab switch
+        msg.iterationCount,
       );
     });
   }
@@ -20655,7 +20674,15 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
     if (stopBtn) stopBtn.style.display = "inline-block";
 
     // Create streaming message placeholder
-    const streamingDiv = this.appendMessage(messagesArea, "Assistant", "");
+    const streamingDiv = this.appendMessage(
+      messagesArea,
+      "Assistant",
+      "",
+      undefined,
+      false,
+      undefined,
+      1,
+    );
     const contentDiv = streamingDiv.querySelector(
       "[data-content]",
     ) as HTMLElement;

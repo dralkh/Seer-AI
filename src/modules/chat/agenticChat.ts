@@ -178,7 +178,7 @@ export function createToolProcessUI(doc: Document): {
     };
 
     const setCompleted = (count: number) => {
-        label.textContent = `Completed ${count} step${count !== 1 ? 's' : ''}`;
+        label.textContent = `Completed ${count} analysis turn${count !== 1 ? 's' : ''}`;
         icon.textContent = "✓";
         icon.style.filter = "none";
         icon.style.color = "var(--accent-green, #34C759)";
@@ -360,7 +360,7 @@ export interface AgentUIObserver {
     onToolCallStarted: (toolCall: ToolCall) => void;
     onToolCallCompleted: (toolCall: ToolCall, result: ToolResult) => void;
     onMessageUpdate: (content: string) => void;
-    onComplete: (content: string) => void;
+    onComplete: (content: string, iterationCount?: number) => void;
     onError: (error: Error) => void;
     onIterationStarted?: (iteration: number) => void;
 }
@@ -448,6 +448,15 @@ export async function handleAgenticChat(
         // Notify observer that a new iteration (reasoning turn) has started
         // This allows resetting the UI status from "Calling Tool" back to "Thinking"
         observer.onIterationStarted?.(iteration);
+
+        // Inject a hidden internal system hint to help the model maintain context
+        // This ensures the model knows the current turn number for internal tracking
+        if (iteration > 1) {
+            messages.push({
+                role: "system",
+                content: `[System Update: Reasoning turn ${iteration}. Continue your task concisely.]`
+            });
+        }
 
         let toolCallsReceived: ToolCall[] = [];
         let iterationContent = "";
@@ -583,7 +592,7 @@ export async function handleAgenticChat(
         Zotero.debug(`[seerai][trace] Summary: ${agentTracer.getExecutionSummary(trace)}`);
     }
 
-    observer.onComplete(fullResponse);
+    observer.onComplete(fullResponse, iteration);
 }
 
 /**
