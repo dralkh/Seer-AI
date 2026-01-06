@@ -50,6 +50,7 @@
 - **Vision Support**: Paste images directly into chat for multimodal analysis.
 - **Interactive Follow-ups**: Deepen the conversation with streaming follow-up questions.
 - **Configurable Citations**: Choose your preferred citation style for AI insights and chat.
+- **Smart Copy**: Select and copy text with preserved formatting (Markdown) directly from chat bubbles.
 - **Enhanced Keybindings**: 
   - `Enter`: Insert new line
   - `Shift+Enter`: Send message
@@ -85,6 +86,7 @@
 - **AI-Powered Columns**: Define custom columns with AI prompts (e.g., "Methodology", "Sample Size").
 - **Inline Editing**: innovative inline editor for column titles and prompts.
 - **One-Click Generation**: Generate data for individual cells or entire columns instantly.
+- **Bulk Actions**: Regenerate content or add selected papers to collections in bulk.
 - **Side Strip Actions**: Unified controls for adding, removing columns, generating triggers, and settings.
 
 ### OCR & Text Extraction
