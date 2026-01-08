@@ -292,12 +292,13 @@ async function processSelectedItems() {
 
 /**
  * Search for PDFs for selected items that don't have PDF attachments
+ * Uses concurrent processing with timeout, retry, and Semantic Scholar title search
  */
 async function searchPdfsForSelectedItems() {
   const items = Zotero.getActiveZoteroPane().getSelectedItems();
   ztoolkit.log(`Search PDF: Selected ${items.length} items`);
 
-  // Filter items without PDF but with identifiers
+  // Filter items without PDF but with identifiers OR title (for SS title search)
   const itemsToSearch: Zotero.Item[] = [];
 
   for (const item of items) {
@@ -315,12 +316,15 @@ async function searchPdfsForSelectedItems() {
     });
 
     if (!hasPdf) {
-      // Check for identifiers
+      // Check for identifiers OR title (title enables SS search to discover DOI)
+      const title = item.getField("title") as string;
       const doi = item.getField("DOI");
       const extra = (item.getField("extra") as string) || "";
       const hasArxiv = /arxiv:/i.test(extra);
       const hasPmid = /pmid:/i.test(extra);
-      if (doi || hasArxiv || hasPmid) {
+
+      // Accept if has any identifier OR just a title (for SS discovery)
+      if (doi || hasArxiv || hasPmid || title) {
         itemsToSearch.push(item);
       }
     }
@@ -328,31 +332,75 @@ async function searchPdfsForSelectedItems() {
 
   ztoolkit.log(`Search PDF: ${itemsToSearch.length} items to search`);
   if (itemsToSearch.length === 0) {
-    ztoolkit.log("No items without PDF to search");
+    new ztoolkit.ProgressWindow("Search PDF")
+      .createLine({
+        text: "No items without PDF to search.",
+        progress: 100,
+      })
+      .show();
     return;
   }
 
-  // Use Assistant's PDF discovery
+  // Import concurrent runner and PDF finder
   const { findAndAttachPdfForItem } = await import("./modules/assistant");
+  const { runConcurrentTasks, formatTaskStats } = await import("./utils/concurrentRunner");
 
-  ztoolkit.log(`Search PDF: Processing ${itemsToSearch.length} items...`);
+  // Create progress window using native Zotero.ProgressWindow for proper close behavior
+  const pw = new Zotero.ProgressWindow({ closeOnClick: true });
+  pw.changeHeadline("Search PDF");
+  pw.addDescription(`Searching ${itemsToSearch.length} items...`);
+  pw.show();
 
-  let found = 0;
-  for (let i = 0; i < itemsToSearch.length; i++) {
-    const item = itemsToSearch[i];
-    ztoolkit.log(
-      `Search PDF: ${i + 1}/${itemsToSearch.length} - ${item.getField("title")}`,
-    );
+  // Get settings
+  const timeoutMs = (Zotero.Prefs.get(
+    `${addon.data.config.prefsPrefix}.pdfSearchTimeout`,
+  ) as number) || 60000;
+  const concurrency = (Zotero.Prefs.get(
+    `${addon.data.config.prefsPrefix}.pdfSearchConcurrency`,
+  ) as number) || 5;
 
-    try {
-      const success = await findAndAttachPdfForItem(item);
-      if (success) found++;
-    } catch (e) {
-      ztoolkit.log(`Search PDF error for ${item.id}: ${e}`);
-    }
-  }
+  // Run concurrent search
+  const results = await runConcurrentTasks({
+    tasks: itemsToSearch.map((item, index) => ({ item, index })),
+    concurrency,
+    timeoutMs,
+    maxRetries: 3,
+    retryDelayMs: 2000,
 
-  ztoolkit.log(`Search PDF: Done! Found ${found}/${itemsToSearch.length} PDFs`);
+    onProgress: (stats) => {
+      pw.changeHeadline(`🔍 ${formatTaskStats(stats)}`);
+    },
+
+    executor: async (task) => {
+      const success = await findAndAttachPdfForItem(task.item);
+      return success;
+    },
+
+    onTaskError: (task, error, _index, willRetry) => {
+      if (willRetry) {
+        ztoolkit.log(`Search PDF: Retrying ${task.item.id}: ${error.message}`);
+      } else {
+        ztoolkit.log(`Search PDF: Failed ${task.item.id}: ${error.message}`);
+      }
+    },
+
+    onTaskSkip: (task, reason) => {
+      ztoolkit.log(`Search PDF: Skipped ${task.item.id}: ${reason}`);
+    },
+  });
+
+  // Calculate stats
+  const succeeded = results.filter(r => r.status === 'success' && r.result === true).length;
+  const notFound = results.filter(r => r.status === 'success' && r.result === false).length;
+  const failed = results.filter(r => r.status === 'failed').length;
+  const skipped = results.filter(r => r.status === 'skipped').length;
+
+  ztoolkit.log(`Search PDF: Done! ${succeeded} found, ${notFound} not found, ${failed} failed, ${skipped} skipped`);
+
+  // Show final result
+  pw.changeHeadline("Search Complete");
+  pw.addDescription(`✓ ${succeeded}📄 found, ${notFound + failed + skipped} not found`);
+  pw.startCloseTimer(3000);
 }
 
 /**

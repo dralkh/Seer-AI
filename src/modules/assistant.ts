@@ -62,6 +62,7 @@ import {
 import { firecrawlService, PdfDiscoveryResult } from "./firecrawl";
 import { getActiveProvider, isActiveProviderConfigured } from "./webSearchProvider";
 import { getTheme } from "../utils/theme";
+import { runConcurrentTasks, formatTaskStats, formatTaskSummary, TaskStats } from "../utils/concurrentRunner";
 // Prompt Library & Placeholder System imports
 import { PromptTemplate, loadPrompts } from "./chat/promptLibrary";
 import { showPromptPicker } from "./chat/ui/promptPicker";
@@ -144,6 +145,21 @@ const firecrawlPdfCache = new Map<string, PdfDiscoveryResult>();
 
 // Cache for Zotero Find Full Text results (cacheKey -> pdfPath or null)
 const zoteroFindPdfCache: Map<string, string | null> = new Map();
+
+// ==================== PDF Search State Tracker ====================
+// Tracks active and completed PDF searches for persistence across tab switches
+type PdfSearchStatus = 'queued' | 'searching' | 'retrying' | 'found' | 'notfound' | 'skipped' | 'error';
+interface PdfSearchState {
+  paperId: number;
+  status: PdfSearchStatus;
+  message?: string;
+  startedAt: number;
+}
+// Active PDF search state (persists across tab switches)
+const activePdfSearches: Map<number, PdfSearchState> = new Map();
+// Overall batch search state
+let pdfSearchBatchActive = false;
+let pdfSearchBatchStats = { total: 0, completed: 0, succeeded: 0, failed: 0, skipped: 0 };
 
 // Search analysis column configuration (persisted)
 let searchColumnConfig: SearchColumnConfig = { ...defaultSearchColumnConfig };
@@ -353,22 +369,33 @@ async function findPdfViaEuropePmc(
 
 /**
  * Download PDF from URL and attach to a Zotero item
+ * Includes timeout to prevent hanging on slow/stuck downloads
  */
 async function downloadAndAttachPdf(
   item: Zotero.Item,
   pdfUrl: string,
+  timeoutMs: number = 30000, // 30 second default timeout per download
 ): Promise<boolean> {
   try {
     Zotero.debug(`[seerai] Downloading PDF from: ${pdfUrl}`);
-    const attachment = await Zotero.Attachments.importFromURL({
+
+    // Create a timeout promise
+    const timeoutPromise = new Promise<null>((_, reject) => {
+      setTimeout(() => reject(new Error(`Download timed out after ${timeoutMs}ms`)), timeoutMs);
+    });
+
+    // Race between download and timeout
+    const downloadPromise = Zotero.Attachments.importFromURL({
       url: pdfUrl,
       parentItemID: item.id,
       title: `${item.getField("title")}.pdf`,
       contentType: "application/pdf",
     });
 
+    const attachment = await Promise.race([downloadPromise, timeoutPromise]);
+
     if (attachment) {
-      Zotero.debug(`[seerai] PDF attached successfully: ${attachment.id}`);
+      Zotero.debug(`[seerai] PDF attached successfully: ${(attachment as any).id}`);
       return true;
     } else {
       Zotero.debug(
@@ -8021,10 +8048,14 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     toolbar.appendChild(extractBtn);
 
     // Search all PDF button (find PDFs for items without attachments)
+    // Show progress if batch is active
+    const searchPdfBtnText = pdfSearchBatchActive
+      ? `🔍 ${pdfSearchBatchStats.completed}/${pdfSearchBatchStats.total}`
+      : "🔍 Search all PDF";
     const searchPdfBtn = ztoolkit.UI.createElement(doc, "button", {
       properties: {
         className: "table-btn search-pdf-all-btn",
-        innerText: "🔍 Search all PDF",
+        innerText: searchPdfBtnText,
       },
       attributes: { id: "search-pdf-all-btn" },
       styles: {
@@ -8034,17 +8065,21 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
         borderRadius: "4px",
         backgroundColor: "var(--background-primary)",
         color: "var(--text-primary)",
-        cursor: "pointer",
+        cursor: pdfSearchBatchActive ? "wait" : "pointer",
       },
       listeners: [
         {
           type: "click",
           listener: async () => {
+            if (pdfSearchBatchActive) return; // Don't start new search while one is running
             await this.searchAllPdfsInTable(doc, searchPdfBtn);
           },
         },
       ],
     });
+    if (pdfSearchBatchActive) {
+      (searchPdfBtn as HTMLButtonElement).disabled = true;
+    }
     toolbar.appendChild(searchPdfBtn);
 
     // Export button
@@ -9981,7 +10016,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
 
   /**
    * Search for PDFs for all table items that don't have PDF attachments
-   * Processes items sequentially (one at a time) through the 6-step pipeline
+   * Processes items concurrently with timeout, retry, and progress tracking
    */
   private static async searchAllPdfsInTable(
     doc: Document,
@@ -10045,53 +10080,81 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
       return;
     }
 
-    Zotero.debug(`[seerai] ${tasks.length} items to search for PDFs`);
+    Zotero.debug(`[seerai] ${tasks.length} items to search for PDFs (concurrent mode)`);
 
     const originalBtnText = btn.innerText;
-    let completed = 0;
-    let found = 0;
+    (btn as HTMLButtonElement).disabled = true;
+    btn.style.cursor = "wait";
 
-    // Process sequentially (one at a time)
+    // Get settings for timeout (default 60s) and concurrency (default 5)
+    const timeoutMs = (Zotero.Prefs.get(
+      `${addon.data.config.prefsPrefix}.pdfSearchTimeout`,
+    ) as number) || 60000;
+    const concurrency = (Zotero.Prefs.get(
+      `${addon.data.config.prefsPrefix}.pdfSearchConcurrency`,
+    ) as number) || 5;
+
+    // Initialize batch tracking state
+    pdfSearchBatchActive = true;
+    pdfSearchBatchStats = { total: tasks.length, completed: 0, succeeded: 0, failed: 0, skipped: 0 };
+
+    // Initialize individual paper states
     for (const task of tasks) {
-      completed++;
-      btn.innerText = `🔍 Searching ${completed}/${tasks.length}...`;
-      (btn as HTMLButtonElement).disabled = true;
-      btn.style.cursor = "wait";
+      activePdfSearches.set(task.paperId, {
+        paperId: task.paperId,
+        status: 'queued',
+        startedAt: Date.now(),
+      });
+    }
 
-      // Find the table row and computed cells for this item
-      const tr = doc.querySelector(`tr[data-paper-id="${task.paperId}"]`);
-      const computedCells = tr ? tr.querySelectorAll("td") : [];
+    // Helper to update both tracking state AND cell UI
+    const updateCellStatus = (
+      paperId: number,
+      status: 'searching' | 'found' | 'notfound' | 'skipped' | 'error' | 'retrying',
+      message?: string
+    ) => {
+      // Update tracking state
+      const existing = activePdfSearches.get(paperId);
+      if (existing) {
+        existing.status = status as PdfSearchStatus;
+        existing.message = message;
+      }
 
-      try {
-        const success = await findAndAttachPdfForItem(task.item, (step) => {
-          btn.innerText = `🔍 ${completed}/${tasks.length} ${step}`;
-        });
-        if (success) {
-          found++;
-          Zotero.debug(`[seerai] Found PDF for item ${task.paperId}`);
-          // Update computed column cells to show "📄 Process PDF"
-          computedCells.forEach((td: Element) => {
-            const content = String(td.innerHTML);
-            if (
-              content.includes("Search PDF") ||
-              content.includes("Source-Link") ||
-              content.includes("Searching")
-            ) {
-              (td as HTMLElement).innerHTML =
-                `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
-            }
-          });
-        } else {
-          // Update cells to show fallback buttons (SS and Firecrawl)
-          computedCells.forEach((td: Element) => {
-            const content = String(td.innerHTML);
-            if (
-              content.includes("Search PDF") ||
-              content.includes("Searching")
-            ) {
-              const cell = td as HTMLElement;
+      // Update DOM (may not exist if tab switched)
+      const tr = doc.querySelector(`tr[data-paper-id="${paperId}"]`);
+      if (!tr) return;
+
+      const computedCells = tr.querySelectorAll("td");
+      computedCells.forEach((td: Element) => {
+        const content = String(td.innerHTML);
+        if (
+          content.includes("Search PDF") ||
+          content.includes("Source-Link") ||
+          content.includes("Searching") ||
+          content.includes("⏳") ||
+          content.includes("↻")
+        ) {
+          const cell = td as HTMLElement;
+          switch (status) {
+            case 'searching':
+              cell.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">🔍 Searching...</span>`;
+              break;
+            case 'retrying':
+              cell.innerHTML = `<span style="color: #f57c00; font-size: 11px;">↻ Retrying...</span>`;
+              break;
+            case 'found':
+              cell.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
+              break;
+            case 'skipped':
+              cell.innerHTML = `<span style="color: #f57c00; font-size: 11px;">⏭ ${message || 'Skipped'}</span>`;
+              break;
+            case 'error':
+              cell.innerHTML = `<span style="color: #c62828; font-size: 11px;">✗ ${message || 'Error'}</span>`;
+              cell.title = message || '';
+              break;
+            case 'notfound':
+              // Show fallback buttons
               cell.innerHTML = "";
-
               const container = doc.createElement("div");
               container.className = "fallback-actions";
               container.style.display = "flex";
@@ -10099,7 +10162,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
               container.style.justifyContent = "center";
               container.style.alignItems = "center";
 
-              // 1. Semantic Scholar Link
+              // Semantic Scholar Link
               const ssLink = doc.createElement("a");
               ssLink.innerText = "[Semantic Search]";
               ssLink.title = "Search Metadata and PDF on Semantic Scholar";
@@ -10107,14 +10170,17 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
               ssLink.style.cursor = "pointer";
               ssLink.style.fontSize = "10px";
               ssLink.style.textDecoration = "underline";
-              ssLink.onclick = (e) => {
-                e.stopPropagation();
-                Assistant.searchSemanticScholarForTableItem(task.item, ssLink);
-              };
+              const taskItem = tasks.find(t => t.paperId === paperId);
+              if (taskItem) {
+                ssLink.onclick = (e) => {
+                  e.stopPropagation();
+                  Assistant.searchSemanticScholarForTableItem(taskItem.item, ssLink);
+                };
+              }
               container.appendChild(ssLink);
 
-              // 2. Firecrawl Link (if configured)
-              if (firecrawlService.isConfigured()) {
+              // Firecrawl Link (if configured)
+              if (firecrawlService.isConfigured() && taskItem) {
                 const fireLink = doc.createElement("a");
                 fireLink.innerText = "[Firecrawl Search]";
                 fireLink.title = "Deep web search for PDF via Firecrawl";
@@ -10125,31 +10191,101 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
                 fireLink.style.marginLeft = "4px";
                 fireLink.onclick = (e) => {
                   e.stopPropagation();
-                  Assistant.searchFirecrawlForTableItem(task.item, fireLink);
+                  Assistant.searchFirecrawlForTableItem(taskItem.item, fireLink);
                 };
                 container.appendChild(fireLink);
               }
 
-              // 3. Keep Source Link if available (small icon) can be added here if needed,
-              // but user requested just SS and Firecrawl buttons in the prompt.
-
               cell.appendChild(container);
-            }
-          });
+              break;
+          }
         }
-      } catch (e) {
-        Zotero.debug(`[seerai] Search error for ${task.paperId}: ${e}`);
-      }
-    }
+      });
+    };
 
-    // Restore button
-    btn.innerText = `✓ Found ${found}/${tasks.length}`;
+    // Run concurrent PDF search
+    const results = await runConcurrentTasks({
+      tasks,
+      concurrency,
+      timeoutMs,
+      maxRetries: 3,
+      retryDelayMs: 2000,
+
+      onProgress: (stats: TaskStats) => {
+        // Update batch stats for persistence across tab switches
+        pdfSearchBatchStats = {
+          total: stats.total,
+          completed: stats.completed,
+          succeeded: stats.succeeded,
+          failed: stats.failed,
+          skipped: stats.skipped
+        };
+        btn.innerText = `🔍 ${formatTaskStats(stats)}`;
+      },
+
+      onTaskStart: (task) => {
+        updateCellStatus(task.paperId, 'searching');
+      },
+
+      executor: async (task) => {
+        const success = await findAndAttachPdfForItem(task.item);
+        return success;
+      },
+
+      onTaskComplete: (task, success) => {
+        if (success) {
+          Zotero.debug(`[seerai] Found PDF for item ${task.paperId}`);
+          updateCellStatus(task.paperId, 'found');
+        } else {
+          updateCellStatus(task.paperId, 'notfound');
+        }
+      },
+
+      onTaskError: (task, error, _index, willRetry) => {
+        if (willRetry) {
+          Zotero.debug(`[seerai] Retrying PDF search for ${task.paperId}: ${error.message}`);
+          updateCellStatus(task.paperId, 'retrying');
+        } else {
+          Zotero.debug(`[seerai] PDF search failed for ${task.paperId}: ${error.message}`);
+        }
+      },
+
+      onTaskSkip: (task, reason) => {
+        Zotero.debug(`[seerai] Skipped PDF search for ${task.paperId}: ${reason}`);
+        updateCellStatus(task.paperId, 'skipped', reason);
+      },
+    });
+
+    // Calculate final stats
+    const succeeded = results.filter(r => r.status === 'success' && r.result === true).length;
+    const failed = results.filter(r => r.status === 'failed').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
+    const notFound = results.filter(r => r.status === 'success' && r.result === false).length;
+
+    Zotero.debug(`[seerai] PDF search complete: ${succeeded} found, ${notFound} not found, ${failed} failed, ${skipped} skipped`);
+
+    // Update batch stats
+    pdfSearchBatchStats = { total: tasks.length, completed: tasks.length, succeeded, failed, skipped };
+
+    // Clear batch active state (but keep individual states for a bit for UI restoration)
+    pdfSearchBatchActive = false;
+
+    // Clear individual states after a delay (allow UI restoration on tab switch back)
+    setTimeout(() => {
+      for (const task of tasks) {
+        activePdfSearches.delete(task.paperId);
+      }
+    }, 30000); // Keep states for 30 seconds
+
+    // Restore button with summary
+    btn.innerText = `✓ ${succeeded}📄 ${failed + skipped > 0 ? `${failed}✗ ${skipped}⏭` : ''}`;
     (btn as HTMLButtonElement).disabled = false;
     btn.style.cursor = "pointer";
     setTimeout(() => {
       btn.innerText = originalBtnText;
-    }, 3000);
+    }, 4000);
   }
+
 
   /**
    * Helper: Search Semantic Scholar for a table item (fallback interaction)
@@ -13401,20 +13537,57 @@ You MUST call the generate_tags function.`;
             const hasTitle = !!itemForIndicator?.getField("title");
 
             if (hasDoi || hasArxiv || hasPmid || hasTitle) {
-              // Check for persisted PDF discovery result first
-              const persistedDiscovery = currentTableConfig?.pdfDiscoveryData?.[row.paperId];
-              if (persistedDiscovery) {
-                if (persistedDiscovery.status === 'found') {
-                  td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
-                } else if (persistedDiscovery.status === 'source_link' && persistedDiscovery.sourceUrl) {
-                  td.innerHTML = `<span class="source-link-btn" data-url="${persistedDiscovery.sourceUrl}" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔗 Source-Link</span>`;
-                } else if (persistedDiscovery.status === 'not_found') {
-                  td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">❌ Not found</span>`;
+              // FIRST: Check for active/in-progress PDF search state (survives tab switches)
+              const activeSearch = activePdfSearches.get(row.paperId);
+              if (activeSearch) {
+                switch (activeSearch.status) {
+                  case 'queued':
+                  case 'searching':
+                    td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">🔍 Searching...</span>`;
+                    break;
+                  case 'retrying':
+                    td.innerHTML = `<span style="color: #f57c00; font-size: 11px;">↻ Retrying...</span>`;
+                    break;
+                  case 'found':
+                    td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
+                    break;
+                  case 'notfound': {
+                    // Show source link if we can resolve one
+                    const doi = itemForIndicator?.getField("DOI") as string;
+                    const arxiv = extractArxivFromItem(itemForIndicator);
+                    const pmid = extractPmidFromItem(itemForIndicator);
+                    const itemUrl = itemForIndicator?.getField("url") as string;
+                    const sourceLink = getSourceLinkForPaper(doi, arxiv, pmid, undefined, itemUrl);
+                    if (sourceLink) {
+                      td.innerHTML = `<span class="source-link-btn" data-url="${sourceLink}" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔗 Source Link</span>`;
+                    } else {
+                      td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">❌ No PDF found</span>`;
+                    }
+                    break;
+                  }
+                  case 'skipped':
+                    td.innerHTML = `<span style="color: #f57c00; font-size: 11px;">⏭ ${activeSearch.message || 'Skipped'}</span>`;
+                    break;
+                  case 'error':
+                    td.innerHTML = `<span style="color: #c62828; font-size: 11px;">✗ ${activeSearch.message || 'Error'}</span>`;
+                    break;
+                }
+              } else {
+                // Check for persisted PDF discovery result
+                const persistedDiscovery = currentTableConfig?.pdfDiscoveryData?.[row.paperId];
+                if (persistedDiscovery) {
+                  if (persistedDiscovery.status === 'found') {
+                    td.innerHTML = `<span style="color: var(--highlight-primary); font-size: 11px;">📄 Process PDF</span>`;
+                  } else if (persistedDiscovery.status === 'source_link' && persistedDiscovery.sourceUrl) {
+                    td.innerHTML = `<span class="source-link-btn" data-url="${persistedDiscovery.sourceUrl}" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔗 Source-Link</span>`;
+                  } else if (persistedDiscovery.status === 'not_found') {
+                    td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">❌ Not found</span>`;
+                  } else {
+                    td.innerHTML = `<span class="search-pdf-btn" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔍 Search PDF</span>`;
+                  }
                 } else {
                   td.innerHTML = `<span class="search-pdf-btn" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔍 Search PDF</span>`;
                 }
-              } else {
-                td.innerHTML = `<span class="search-pdf-btn" style="color: var(--highlight-primary); font-size: 11px; cursor: pointer;">🔍 Search PDF</span>`;
               }
             } else {
               td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">No source</span>`;
