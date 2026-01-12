@@ -691,6 +691,8 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
     permSection.appendChild(permList);
     body.appendChild(permSection);
 
+    body.appendChild(permSection);
+
     container.appendChild(body);
     const mountPoint = doc.body || doc.documentElement;
     if (mountPoint) {

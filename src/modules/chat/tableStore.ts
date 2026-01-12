@@ -340,6 +340,19 @@ export class TableStore {
             Zotero.debug(`[seerai] Error deleting column preset: ${e}`);
         }
     }
+    /**
+     * Restore multiple column presets (overwrite existing)
+     */
+    async restorePresets(presets: ColumnPreset[]): Promise<void> {
+        try {
+            await this.ensureDirectory();
+            const encoder = new TextEncoder();
+            await IOUtils.write(this.presetsFile, encoder.encode(JSON.stringify(presets, null, 2)));
+            Zotero.debug(`[seerai] Restored ${presets.length} column presets`);
+        } catch (e) {
+            Zotero.debug(`[seerai] Error restoring column presets: ${e}`);
+        }
+    }
 }
 
 // Singleton instance

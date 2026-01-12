@@ -500,6 +500,7 @@ async function processGenerateTagsForSelectedItems() {
 
   let successCount = 0;
   let errorCount = 0;
+  let skippedCount = 0;
 
   for (const item of regularItems) {
     const title = item.getField("title");
@@ -508,6 +509,17 @@ async function processGenerateTagsForSelectedItems() {
       progress: -1,
       icon: "default"
     });
+
+    // Skip if already tagged by Seer AI
+    if (item.hasTag("Seerai-Tagged")) {
+      line.changeLine({
+        text: `Skipped "${title}" (Already tagged)`,
+        progress: 100,
+        icon: "default"
+      });
+      skippedCount++;
+      continue;
+    }
 
     try {
       const result = await executeGenerateItemTags(
@@ -541,7 +553,7 @@ async function processGenerateTagsForSelectedItems() {
   }
 
   pw.createLine({
-    text: `Complete: ${successCount} processed, ${errorCount} errors.`,
+    text: `Complete: ${successCount} processed, ${skippedCount} skipped, ${errorCount} errors.`,
     progress: 100,
   });
 }

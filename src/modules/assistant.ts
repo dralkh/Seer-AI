@@ -82,6 +82,7 @@ import { ToolResult } from "./chat/tools/toolTypes";
 import { DetachedWindowManager } from "./ui/windowManager";
 
 
+
 // Debounce timer for autocomplete
 let autocompleteTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -608,6 +609,28 @@ export async function findAndAttachPdfForItem(
   const epmcResult = await findPdfViaEuropePmc(doi, pmid);
   if (epmcResult && (await downloadAndAttachPdf(item, epmcResult))) {
     return true;
+  }
+
+  // Step 7.5: Local Resolver
+  try {
+    // @ts-ignore
+    const extraResolvers = import.meta.glob('../../doc/localResolver.ts', { eager: true });
+    for (const path in extraResolvers) {
+      const mod = extraResolvers[path] as any;
+      if (mod && typeof mod.findPdf === 'function' && doi) {
+        onProgress?.("🕵️ Checking local resolver...");
+        try {
+          const pdfUrl = await mod.findPdf(doi);
+          if (pdfUrl && (await downloadAndAttachPdf(item, pdfUrl))) {
+            return true;
+          }
+        } catch (e) {
+          Zotero.debug(`[seerai] Local resolver failed: ${e}`);
+        }
+      }
+    }
+  } catch (e) {
+    // Ignore
   }
 
   // Step 8: Source Link
@@ -5614,7 +5637,9 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     });
 
     // Get current value
-    const currentLen = Zotero.Prefs.get("extensions.seerai.searchAiInsightsResponseLength") as number || 500;
+    const rawLen = Zotero.Prefs.get("extensions.seerai.searchAiInsightsResponseLength") as number;
+    // Treat 0 as Limitless (mapped to 2000 for slider), otherwise fallback to 500
+    const currentLen = rawLen === 0 ? 2000 : (rawLen ?? 500);
     const lenText = currentLen >= 2000 ? "Limitless" : `${currentLen} words`;
 
     const lenLabel = ztoolkit.UI.createElement(doc, "div", {
@@ -5649,7 +5674,10 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
       }
     });
     slider.addEventListener("change", () => {
-      const val = parseInt(slider.value);
+      let val = parseInt(slider.value);
+      // If maxed out, treat as Limitless (0)
+      if (val >= 2000) val = 0;
+
       Zotero.Prefs.set("extensions.seerai.searchAiInsightsResponseLength", val);
       currentSearchState.searchAiInsightsResponseLength = val; // Update runtime state
     });
@@ -5712,17 +5740,9 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     });
 
     advancedSection.appendChild(styleSelect);
-    Zotero.debug("[seerai] Appending advanced/citation section");
-    popover.appendChild(advancedSection);
 
-    // Append to DOM
-    if (doc.body) {
-      doc.body.appendChild(backdrop);
-      doc.body.appendChild(popover);
-    } else {
-      doc.documentElement?.appendChild(backdrop);
-      doc.documentElement?.appendChild(popover);
-    }
+    // Append sections
+    popover.appendChild(advancedSection);
 
     // Position
     const rect = anchor.getBoundingClientRect();
@@ -5738,6 +5758,15 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
 
     popover.style.top = `${top}px`;
     popover.style.left = `${left}px`;
+
+    // Append to DOM
+    if (doc.body) {
+      doc.body.appendChild(backdrop);
+      doc.body.appendChild(popover);
+    } else {
+      doc.documentElement?.appendChild(backdrop);
+      doc.documentElement?.appendChild(popover);
+    }
   }
 
   /**
@@ -7979,6 +8008,8 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
             const target = e.target as HTMLInputElement;
             if (currentTableConfig) {
               currentTableConfig.filterQuery = target.value;
+              // Persist filter query to table config so it's restored on reload/page switch
+              getTableStore().saveConfig(currentTableConfig);
             }
             this.debounceTableRefresh(doc, item);
           },
@@ -8293,12 +8324,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
         {
           type: "click",
           listener: async () => {
-            if (currentTableConfig && currentPage > 1) {
-              currentTableConfig.currentPage = currentPage - 1;
-              const tableStore = getTableStore();
-              await tableStore.saveConfig(currentTableConfig);
-              await this.forceRefreshTable();
-            }
+            await this.handleTablePagination(-1);
           },
         },
       ],
@@ -8333,12 +8359,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
         {
           type: "click",
           listener: async () => {
-            if (currentTableConfig && currentPage < totalPages) {
-              currentTableConfig.currentPage = currentPage + 1;
-              const tableStore = getTableStore();
-              await tableStore.saveConfig(currentTableConfig);
-              await this.forceRefreshTable();
-            }
+            await this.handleTablePagination(1);
           },
         },
       ],
@@ -10843,7 +10864,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     sourceText: string,
   ): Promise<string> {
     const paperTitle = (item.getField("title") as string) || "Untitled";
-    const responseLength = currentTableConfig?.responseLength || 100;
+    const responseLength = currentTableConfig?.responseLength ?? 100;
 
     // Build a targeted prompt using column title and description
     const lengthInstruction =
@@ -14256,6 +14277,27 @@ You MUST call the generate_tags function.`;
       }
     }, 300);
   }
+  /**
+   * Handle table pagination with proper state management
+   */
+  private static async handleTablePagination(delta: number): Promise<void> {
+    if (!currentTableConfig) return;
+
+    // Apply delta
+    currentTableConfig.currentPage += delta;
+
+    // Simple lower bound check
+    if (currentTableConfig.currentPage < 1) currentTableConfig.currentPage = 1;
+
+    // We don't strictly check upper bound here as it depends on total pages which might change.
+    // loadTableData() called by forceRefreshTable() will handle clamping to max pages and updating config.
+
+    const tableStore = getTableStore();
+    await tableStore.saveConfig(currentTableConfig);
+
+    await this.forceRefreshTable();
+  }
+
 
   /**
    * Force an immediate table refresh with proper container validation.
@@ -14466,45 +14508,22 @@ You MUST call the generate_tags function.`;
         });
       }
 
-      // STEP 2: Apply search filter on the COMPLETE row data
-      // Using simple, reliable inline implementation
       let filteredRows: TableRow[];
 
       if (filterQuery) {
         Zotero.debug(`[seerai:search] Starting search for: "${filterQuery}" across ${allRows.length} rows`);
 
         filteredRows = allRows.filter((row) => {
-          // Concatenate ALL data values into one searchable string
-          const allValues = Object.values(row.data)
+          // Concatenated Phrase Search: Treat row as a single text block
+          // This ensures searches like "**Verdict:** NO" only match if they appear contiguously,
+          // avoiding false positives where terms are split across columns (e.g. "Verdict: MAYBE" ... "if NO").
+          const blob = Object.values(row.data)
             .map((v) => String(v || ""))
-            .join(" ");
+            .join(" ")
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .toLowerCase();
 
-          // Strip <think>...</think> tags and their content before searching
-          // These contain AI reasoning that often has words like "no", "yes" causing false matches
-          const cleanedText = allValues.replace(/<think>[\s\S]*?<\/think>/gi, "");
-
-          // Create one big searchable string (lowercase for case-insensitive)
-          const searchableText = cleanedText.toLowerCase();
-
-          // Split query into individual terms (AND logic - all must match)
-          const queryTerms = filterQuery.split(/\s+/).filter((t) => t.length > 0);
-
-          // Check if EVERY term exists as a WHOLE WORD (using word boundary regex)
-          const allTermsMatch = queryTerms.every((term) => {
-            // Escape special regex characters in the search term
-            const escapedTerm = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-            // Use word boundary \b to match whole words only
-            // This ensures "no" matches "NO" but not "coronary" or "immunoglobulin"
-            const wordBoundaryRegex = new RegExp(`\\b${escapedTerm}\\b`, "i");
-            return wordBoundaryRegex.test(searchableText);
-          });
-
-          // Debug: Log first 5 rows to see what's being searched
-          if (allRows.indexOf(row) < 5) {
-            Zotero.debug(`[seerai:search] Row ${row.paperId}: Keys=[${Object.keys(row.data).join(',')}] | Match=${allTermsMatch} | SearchText="${searchableText.substring(0, 100)}..."`);
-          }
-
-          return allTermsMatch;
+          return blob.includes(filterQuery.toLowerCase().trim());
         });
 
         Zotero.debug(`[seerai:search] Result: ${filteredRows.length}/${allRows.length} rows match "${filterQuery}"`);
@@ -17019,7 +17038,7 @@ You MUST call the generate_tags function.`;
     const lengthSection = ztoolkit.UI.createElement(doc, "div", {
       styles: { display: "flex", flexDirection: "column", gap: "8px" },
     });
-    const currentLen = currentTableConfig?.responseLength || 100;
+    const currentLen = currentTableConfig?.responseLength ?? 100;
     const lenText =
       currentLen >= 4192 || currentLen === 0
         ? "Limitless"
@@ -17061,6 +17080,10 @@ You MUST call the generate_tags function.`;
       }
     });
     popover.appendChild(lengthSection);
+
+    popover.appendChild(lengthSection);
+
+    // === Column Presets ===
 
     // === Column Presets ===
     const presetsSection = ztoolkit.UI.createElement(doc, "div", {

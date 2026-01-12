@@ -26,6 +26,12 @@ if (!basicTool.getGlobal("Zotero")[config.addonInstance]) {
       return DetachedWindowManager;
     },
   });
+  Object.defineProperty(addon.api, "ConfigManager", {
+    get() {
+      const { exportAllData, importAllData } = require("./modules/chat/configManager");
+      return { exportAllData, importAllData };
+    },
+  });
 }
 
 function defineGlobal(name: Parameters<BasicTool["getGlobal"]>[0]): void;

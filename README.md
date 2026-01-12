@@ -13,7 +13,7 @@
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" />
   </a>
   <a href="https://github.com/dralkh/seerai/releases">
-    <img src="https://img.shields.io/badge/Version-1.5.0-blue" />
+    <img src="https://img.shields.io/badge/Version-1.5.3-blue" />
   </a>
 </p>
 
@@ -56,6 +56,7 @@
   - `Shift+Enter`: Send message
   - `Ctrl+Shift+S`: Toggle/Focus detachable window
 - **Detachable Window**: Pop out the SeerAI interface into a standalone resizable floating window to maintain chat access while navigating your library.
+- **Themed UI**: Enhanced dialogs and components with full theme support for a consistent look across Zotero's Light and Dark modes.
 
 ### Semantic Search & Discovery
 - **Web Search**: Integrated Firecrawl & Tavily support for finding high-quality full-text content.
@@ -66,6 +67,8 @@
   - **PDF Discovery**: Automatically finds and attaches PDFs during import.
   - **Source Link**: Fallback to source links if PDFs are unavailable.
   - **Status Indicators**: Clear feedback on import status (⬇️ Importing, ✅ Imported, ⚠️ Failed).
+- **Global Search Scope**: Searching now extends across all libraries, including personal and group collections.
+- **Smart Regex matching**: Improved search precision with intelligent handling of word boundaries and special characters.
 
 ### Agentic Chat & Tool Use
 - **Autonomous Agents**: AI can now use tools to interact with your Zotero library and the web.

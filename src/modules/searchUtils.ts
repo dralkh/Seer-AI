@@ -91,9 +91,34 @@ export function advancedSearch(
         (t) => t !== null && t !== undefined && String(t).trim() !== "",
     );
 
+    // Helper to create smart regex for a term
+    const createSmartRegex = (term: string): RegExp => {
+        // Escape special regex characters
+        const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        // Smart Boundaries:
+        // Only enforce word boundary if the edge character is alphanumeric (word character)
+        // This allows "NO" -> "\bNO\b" (matches "no", not "technology")
+        // But "**Verdict:**" -> "**Verdict:**" (matches substring with symbols)
+
+        const startBoundary = /^\w/.test(term) ? "\\b" : "";
+        const endBoundary = /\w$/.test(term) ? "\\b" : "";
+
+        return new RegExp(`${startBoundary}${escaped}${endBoundary}`, "i");
+    };
+
+    // Check if a regex matches any of the targets
+    const matchRegexInAny = (regex: RegExp, targets: string[]): boolean => {
+        for (const target of targets) {
+            if (regex.test(target)) return true;
+        }
+        return false;
+    };
+
     // Each term must match at least one target (AND logic)
     for (const term of terms) {
-        if (!matchTermInAny(term, validTargets)) {
+        const regex = createSmartRegex(term);
+        if (!matchRegexInAny(regex, validTargets)) {
             return { matches: false, score: 0 };
         }
     }

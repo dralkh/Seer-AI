@@ -13,6 +13,19 @@ import { AIModelConfig } from "./chat/types";
 // Track selected model config ID
 let selectedConfigId: string | null = null;
 
+/**
+ * Helper function to get CSS variable value
+ */
+function getCssVar(name: string): string {
+  const win = addon.data.prefs!.window;
+  const doc = win.document;
+  const rootElement = doc.documentElement;
+  if (!rootElement) return '';
+  const styles = win.getComputedStyle(rootElement);
+  if (!styles) return '';
+  return styles.getPropertyValue(name).trim() || '';
+}
+
 export async function registerPrefsScripts(_window: Window) {
   // This function is called when the prefs window is opened
   // See addon/content/preferences.xhtml onpaneload
@@ -273,6 +286,13 @@ function bindPrefEvents() {
 
   // Initialize MCP Integration UI
   initMcpIntegrationUI();
+
+  // Initialize Advanced Data Management UI
+  try {
+    initAdvancedDataManagementUI();
+  } catch (e) {
+    Zotero.debug(`[seerai] Error initializing Advanced Data Management UI: ${e}`);
+  }
 }
 
 /**
@@ -313,6 +333,84 @@ function initMcpIntegrationUI() {
     } catch (e) {
       addon.data.prefs!.window.alert("Failed to copy to clipboard");
       console.error(e);
+    }
+  });
+}
+
+/**
+ * Initialize Advanced Data Management UI (Export/Import)
+ */
+function initAdvancedDataManagementUI() {
+  const doc = addon.data.prefs!.window.document;
+  const exportBtn = doc.getElementById(`zotero-prefpane-${config.addonRef}-exportConfig`);
+  const importBtn = doc.getElementById(`zotero-prefpane-${config.addonRef}-importConfig`);
+
+  if (!exportBtn || !importBtn) return;
+
+  // Use the API exposed in index.ts
+  // @ts-ignore
+  const { exportAllData, importAllData } = Zotero.SeerAI.api.ConfigManager;
+
+  exportBtn.addEventListener("command", async () => {
+    try {
+      const data = await exportAllData();
+      const json = JSON.stringify(data, null, 2);
+
+      const win = addon.data.prefs!.window;
+      const Cc = (Components as any).classes;
+      const Ci = (Components as any).interfaces;
+
+      const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+      fp.init(win, "Export Seer-AI Configuration", Ci.nsIFilePicker.modeSave);
+      fp.appendFilter("JSON Files", "*.json");
+      fp.defaultString = `seerai-config-${new Date().toISOString().slice(0, 10)}.json`;
+
+      const res = await new Promise((resolve) => fp.open(resolve));
+      if (res !== Ci.nsIFilePicker.returnCancel && fp.file) {
+        // @ts-ignore
+        await IOUtils.writeUTF8(fp.file.path, json);
+        Zotero.debug(`[seerai] Exported config to ${fp.file.path}`);
+      }
+    } catch (e) {
+      Zotero.debug(`[seerai] Export failed: ${e}`);
+      addon.data.prefs!.window.alert(`Export failed: ${e}`);
+    }
+  });
+
+  importBtn.addEventListener("command", async () => {
+    try {
+      const win = addon.data.prefs!.window;
+      const Cc = (Components as any).classes;
+      const Ci = (Components as any).interfaces;
+
+      const fp = Cc["@mozilla.org/filepicker;1"].createInstance(Ci.nsIFilePicker);
+      fp.init(win, "Import Seer-AI Configuration", Ci.nsIFilePicker.modeOpen);
+      fp.appendFilter("JSON Files", "*.json");
+
+      const res = await new Promise((resolve) => fp.open(resolve));
+      if (res !== Ci.nsIFilePicker.returnCancel && fp.file) {
+        // @ts-ignore
+        const json = await IOUtils.readUTF8(fp.file.path);
+        const data = JSON.parse(json);
+
+        if (
+          win.confirm(
+            "This will overwrite your current Seer-AI configuration (preferences, tables, prompts). Are you sure?",
+          )
+        ) {
+          const result = await importAllData(data);
+          if (result.success) {
+            win.alert(
+              `Import Successful!\n${result.stats}\nPlease restart Zotero/Seer-AI for all changes to take full effect.`,
+            );
+          } else {
+            win.alert(`Import Failed: ${result.error}`);
+          }
+        }
+      }
+    } catch (e) {
+      Zotero.debug(`[seerai] Import failed: ${e}`);
+      addon.data.prefs!.window.alert(`Import failed: ${e}`);
     }
   });
 }
@@ -391,13 +489,22 @@ function renderModelList() {
     const item = doc.createElement('div');
     item.className = 'model-config-item';
     item.setAttribute('data-id', cfg.id);
+    
+    // Get CSS variables for theme-aware colors
+    const itemBg = cfg.isDefault ? getCssVar('--model-item-bg-default') : getCssVar('--model-item-bg');
+    const itemBorder = selectedConfigId === cfg.id
+      ? getCssVar('--model-item-border-selected')
+      : (cfg.isDefault ? getCssVar('--model-item-border-default') : getCssVar('--model-item-border'));
+    const accentColor = getCssVar('--model-item-accent');
+    const secondaryTextColor = getCssVar('--model-item-text-secondary');
+    
     item.style.cssText = `
       padding: 8px 12px;
       margin: 4px 0;
       border-radius: 4px;
       cursor: pointer;
-      background: ${cfg.isDefault ? '#e3f2fd' : '#fff'};
-      border: 1px solid ${selectedConfigId === cfg.id ? '#1976d2' : (cfg.isDefault ? '#90caf9' : '#ddd')};
+      background: ${itemBg};
+      border: 1px solid ${itemBorder};
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -406,8 +513,8 @@ function renderModelList() {
     const info = doc.createElement('div');
     info.innerHTML = `
       <strong style="font-size: 13px;">${escapeHtml(cfg.name)}</strong>
-      ${cfg.isDefault ? '<span style="color: #1976d2; font-size: 11px; margin-left: 8px;">★ Default</span>' : ''}
-      <div style="font-size: 11px; color: #666; margin-top: 2px;">
+      ${cfg.isDefault ? `<span style="color: ${accentColor}; font-size: 11px; margin-left: 8px;">★ Default</span>` : ''}
+      <div style="font-size: 11px; color: ${secondaryTextColor}; margin-top: 2px;">
         ${escapeHtml(cfg.model)} • ${escapeHtml(new URL(cfg.apiURL).hostname)}
       </div>
     `;
@@ -452,6 +559,10 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
   const existingModal = doc.getElementById('model-config-modal-overlay');
   if (existingModal) existingModal.remove();
 
+  // Get CSS variables for modal colors
+  const modalBg = getCssVar('--modal-bg');
+  const modalTitleColor = getCssVar('--modal-title-color');
+  
   // Create modal overlay
   const overlay = doc.createElement('div');
   overlay.id = 'model-config-modal-overlay';
@@ -471,7 +582,7 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
   // Create modal container
   const modal = doc.createElement('div');
   modal.style.cssText = `
-    background: #fff;
+    background: ${modalBg};
     border-radius: 8px;
     padding: 24px;
     min-width: 420px;
@@ -486,7 +597,7 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     margin: 0 0 20px 0;
     font-size: 18px;
     font-weight: 600;
-    color: #333;
+    color: ${modalTitleColor};
   `;
   modal.appendChild(titleEl);
 
@@ -506,33 +617,44 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     { name: 'OpenAI Compatible', apiURL: 'http://seerai.com:1234/v1/', model: 'local-model', placeholder: '(optional)' },
   ];
 
+  // Get CSS variables for form elements
+  const labelColor = getCssVar('--modal-label-color');
+  const inputBg = getCssVar('--modal-input-bg');
+  const inputBorder = getCssVar('--modal-input-border');
+  const inputFocusBorder = getCssVar('--modal-input-focus-border');
+  const inputText = getCssVar('--modal-input-text');
+  const inputPlaceholder = getCssVar('--modal-input-placeholder');
+  
   // Field styles
   const labelStyle = `
     display: block;
     font-size: 13px;
     font-weight: 500;
-    color: #555;
+    color: ${labelColor};
     margin-bottom: 4px;
   `;
   const inputStyle = `
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid #ddd;
+    border: 1px solid ${inputBorder};
     border-radius: 6px;
     font-size: 14px;
     margin-bottom: 16px;
     box-sizing: border-box;
     transition: border-color 0.2s;
+    background: ${inputBg};
+    color: ${inputText};
   `;
   const selectStyle = `
     width: 100%;
     padding: 10px 12px;
-    border: 1px solid #ddd;
+    border: 1px solid ${inputBorder};
     border-radius: 6px;
     font-size: 14px;
     margin-bottom: 16px;
     box-sizing: border-box;
-    background: #fff;
+    background: ${inputBg};
+    color: ${inputText};
     cursor: pointer;
   `;
 
@@ -569,9 +691,13 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     modal.appendChild(presetSelect);
 
     // Divider
+    const dividerBg = getCssVar('--divider-bg');
+    const dividerTextBg = getCssVar('--divider-text-bg');
+    const dividerTextColor = getCssVar('--divider-text-color');
+    
     const divider = doc.createElement('div');
     divider.style.cssText = `
-      border-top: 1px solid #eee;
+      border-top: 1px solid ${dividerBg};
       margin: 4px 0 16px 0;
       position: relative;
     `;
@@ -582,10 +708,10 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
       top: -9px;
       left: 50%;
       transform: translateX(-50%);
-      background: #fff;
+      background: ${dividerTextBg};
       padding: 0 12px;
       font-size: 11px;
-      color: #999;
+      color: ${dividerTextColor};
     `;
     divider.appendChild(dividerText);
     modal.appendChild(divider);
@@ -616,23 +742,26 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
 
     // Add focus effect
     input.addEventListener('focus', () => {
-      input.style.borderColor = '#1976d2';
+      input.style.borderColor = inputFocusBorder;
       input.style.outline = 'none';
     });
     input.addEventListener('blur', () => {
-      input.style.borderColor = '#ddd';
+      input.style.borderColor = inputBorder;
     });
   });
 
   // Error message container
+  const errorBg = getCssVar('--modal-error-bg');
+  const errorText = getCssVar('--modal-error-text');
+  
   const errorContainer = doc.createElement('div');
   errorContainer.style.cssText = `
-    color: #d32f2f;
+    color: ${errorText};
     font-size: 12px;
     margin-bottom: 16px;
     display: none;
     padding: 8px 12px;
-    background: #ffebee;
+    background: ${errorBg};
     border-radius: 4px;
   `;
   modal.appendChild(errorContainer);
@@ -646,24 +775,33 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     margin-top: 8px;
   `;
 
+  // Get button colors
+  const btnBg = getCssVar('--modal-btn-bg');
+  const btnHoverBg = getCssVar('--modal-btn-hover-bg');
+  const btnText = getCssVar('--modal-btn-text');
+  const btnPrimaryBg = getCssVar('--modal-btn-primary-bg');
+  const btnPrimaryHoverBg = getCssVar('--modal-btn-primary-hover-bg');
+  const btnPrimaryText = getCssVar('--modal-btn-primary-text');
+  const btnBorder = getCssVar('--modal-input-border');
+
   // Cancel button
   const cancelBtn = doc.createElement('button');
   cancelBtn.textContent = 'Cancel';
   cancelBtn.style.cssText = `
     padding: 10px 20px;
-    border: 1px solid #ddd;
+    border: 1px solid ${btnBorder};
     border-radius: 6px;
-    background: #fff;
-    color: #666;
+    background: ${btnBg};
+    color: ${btnText};
     font-size: 14px;
     cursor: pointer;
     transition: all 0.2s;
   `;
   cancelBtn.addEventListener('mouseenter', () => {
-    cancelBtn.style.background = '#f5f5f5';
+    cancelBtn.style.background = btnHoverBg;
   });
   cancelBtn.addEventListener('mouseleave', () => {
-    cancelBtn.style.background = '#fff';
+    cancelBtn.style.background = btnBg;
   });
   cancelBtn.addEventListener('click', () => {
     overlay.remove();
@@ -676,18 +814,18 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     padding: 10px 20px;
     border: none;
     border-radius: 6px;
-    background: #1976d2;
-    color: #fff;
+    background: ${btnPrimaryBg};
+    color: ${btnPrimaryText};
     font-size: 14px;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.2s;
   `;
   saveBtn.addEventListener('mouseenter', () => {
-    saveBtn.style.background = '#1565c0';
+    saveBtn.style.background = btnPrimaryHoverBg;
   });
   saveBtn.addEventListener('mouseleave', () => {
-    saveBtn.style.background = '#1976d2';
+    saveBtn.style.background = btnPrimaryBg;
   });
 
   saveBtn.addEventListener('click', () => {
