@@ -130,6 +130,10 @@ export interface AIModelConfig {
     apiKey: string;          // API key
     model: string;           // Model identifier
     isDefault?: boolean;     // Default model for new chats
+    rateLimit?: {
+        type: 'tpm' | 'rpm' | 'concurrency';
+        value: number;
+    };
     createdAt?: string;      // ISO date string
     updatedAt?: string;      // ISO date string
 }
@@ -142,6 +146,7 @@ export interface Conversation {
     updatedAt: Date;
     messages: ChatMessage[];
     states: ChatStates;
+    options: ChatOptions; // Persisted options for this conversation
 }
 
 // Metadata for history listing
@@ -172,6 +177,7 @@ export interface ChatOptions {
     webSearchEnabled: boolean;  // Enable Firecrawl web search for AI context
     selectionMode: SelectionMode; // Navigation behavior: lock (no add), default (single focus), explore (multi-add)
     maxTokens?: number;
+    temperature?: number; // 0.0 - 2.0, undefined = provider default
     model?: string;
 }
 

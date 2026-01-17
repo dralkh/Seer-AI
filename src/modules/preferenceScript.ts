@@ -213,8 +213,7 @@ function bindPrefEvents() {
   bindInput(`zotero-prefpane-${config.addonRef}-datalabUrl`, "datalabUrl");
   bindInput(`zotero-prefpane-${config.addonRef}-datalabApiKey`, "datalabApiKey");
   bindInput(`zotero-prefpane-${config.addonRef}-mistralApiKey`, "mistralApiKey");
-  bindInput(`zotero-prefpane-${config.addonRef}-datalabMaxConcurrent`, "datalabMaxConcurrent");
-  bindInput(`zotero-prefpane-${config.addonRef}-aiMaxConcurrent`, "aiMaxConcurrent");
+
 
   // AI Insights settings
   bindCheckbox(`zotero-prefpane-${config.addonRef}-searchAutoAiInsights`, "searchAutoAiInsights");
@@ -489,7 +488,7 @@ function renderModelList() {
     const item = doc.createElement('div');
     item.className = 'model-config-item';
     item.setAttribute('data-id', cfg.id);
-    
+
     // Get CSS variables for theme-aware colors
     const itemBg = cfg.isDefault ? getCssVar('--model-item-bg-default') : getCssVar('--model-item-bg');
     const itemBorder = selectedConfigId === cfg.id
@@ -497,7 +496,7 @@ function renderModelList() {
       : (cfg.isDefault ? getCssVar('--model-item-border-default') : getCssVar('--model-item-border'));
     const accentColor = getCssVar('--model-item-accent');
     const secondaryTextColor = getCssVar('--model-item-text-secondary');
-    
+
     item.style.cssText = `
       padding: 8px 12px;
       margin: 4px 0;
@@ -562,7 +561,7 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
   // Get CSS variables for modal colors
   const modalBg = getCssVar('--modal-bg');
   const modalTitleColor = getCssVar('--modal-title-color');
-  
+
   // Create modal overlay
   const overlay = doc.createElement('div');
   overlay.id = 'model-config-modal-overlay';
@@ -582,12 +581,13 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
   // Create modal container
   const modal = doc.createElement('div');
   modal.style.cssText = `
-    background: ${modalBg};
+    background: ${modalBg || '#1e1e1e'}; // Fallback to solid dark since transparency is an issue
     border-radius: 8px;
     padding: 24px;
     min-width: 420px;
     max-width: 500px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.1);
   `;
 
   // Modal title
@@ -624,7 +624,7 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
   const inputFocusBorder = getCssVar('--modal-input-focus-border');
   const inputText = getCssVar('--modal-input-text');
   const inputPlaceholder = getCssVar('--modal-input-placeholder');
-  
+
   // Field styles
   const labelStyle = `
     display: block;
@@ -694,7 +694,7 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     const dividerBg = getCssVar('--divider-bg');
     const dividerTextBg = getCssVar('--divider-text-bg');
     const dividerTextColor = getCssVar('--divider-text-color');
-    
+
     const divider = doc.createElement('div');
     divider.style.cssText = `
       border-top: 1px solid ${dividerBg};
@@ -750,10 +750,68 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
     });
   });
 
+  // --- Rate Limit Section ---
+  const rlLabel = doc.createElement('label');
+  rlLabel.textContent = 'Rate Limit';
+  rlLabel.style.cssText = labelStyle;
+  modal.appendChild(rlLabel);
+
+  const rlContainer = doc.createElement('div');
+  rlContainer.style.cssText = `
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+  `;
+
+  // Type Selector
+  const rlTypeSelect = doc.createElement('select') as HTMLSelectElement;
+  rlTypeSelect.style.cssText = selectStyle;
+  rlTypeSelect.style.marginBottom = '0';
+  rlTypeSelect.style.flex = '1';
+
+  const rlTypes = [
+    { value: 'concurrency', label: 'Concurrency (Simultaneous)' },
+    { value: 'rpm', label: 'RPM (Requests / Minute)' },
+    { value: 'tpm', label: 'TPM (Tokens / Minute)' }
+  ];
+
+  rlTypes.forEach(t => {
+    const opt = doc.createElement('option');
+    opt.value = t.value;
+    opt.textContent = t.label;
+    if (existingConfig?.rateLimit?.type === t.value) {
+      opt.selected = true;
+    }
+    rlTypeSelect.appendChild(opt);
+  });
+  rlContainer.appendChild(rlTypeSelect);
+
+  // Value Input
+  const rlValueInput = doc.createElement('input') as HTMLInputElement;
+  rlValueInput.type = 'number';
+  rlValueInput.min = '1';
+  rlValueInput.placeholder = 'Limit';
+  rlValueInput.value = existingConfig?.rateLimit?.value ? String(existingConfig.rateLimit.value) : '5';
+  rlValueInput.style.cssText = inputStyle;
+  rlValueInput.style.marginBottom = '0';
+  rlValueInput.style.flex = '1';
+
+  // Add focus effect
+  rlValueInput.addEventListener('focus', () => {
+    rlValueInput.style.borderColor = inputFocusBorder;
+    rlValueInput.style.outline = 'none';
+  });
+  rlValueInput.addEventListener('blur', () => {
+    rlValueInput.style.borderColor = inputBorder;
+  });
+
+  rlContainer.appendChild(rlValueInput);
+  modal.appendChild(rlContainer);
+
   // Error message container
   const errorBg = getCssVar('--modal-error-bg');
   const errorText = getCssVar('--modal-error-text');
-  
+
   const errorContainer = doc.createElement('div');
   errorContainer.style.cssText = `
     color: ${errorText};
@@ -834,6 +892,10 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
       apiURL: inputs.apiURL.value.trim(),
       apiKey: inputs.apiKey.value.trim(),
       model: inputs.model.value.trim(),
+      rateLimit: {
+        type: rlTypeSelect.value as 'tpm' | 'rpm' | 'concurrency',
+        value: parseInt(rlValueInput.value) || 5
+      }
     };
 
     // Validate

@@ -68,6 +68,10 @@ export interface StreamCallbacks {
 }
 
 
+
+import { RateLimiter } from "../utils/rateLimiter";
+import { getActiveModelConfig } from "./chat/modelConfig";
+
 export class OpenAIService {
     // Active AbortController for current request (may not be available in Zotero)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -131,10 +135,27 @@ export class OpenAIService {
      * Standard chat completion (non-streaming)
      */
     async chatCompletion(messages: OpenAIMessage[]): Promise<string> {
-        const { apiURL, apiKey, model } = this.getPrefs();
+        let { apiURL, apiKey, model } = this.getPrefs();
+
+        // Try to get full config for rate limiting
+        const activeConfig = getActiveModelConfig();
+        if (activeConfig) {
+            // Use active config values if available, otherwise fallback to prefs
+            apiURL = activeConfig.apiURL;
+            apiKey = activeConfig.apiKey;
+            model = activeConfig.model;
+        }
 
         if (!apiKey) {
             throw new Error("OpenAI API Key is missing. Please set it in preferences.");
+        }
+
+        // Apply Rate Limiting
+        const rateLimiter = RateLimiter.getInstance();
+        if (activeConfig) {
+            // Estimate tokens: simplistic count
+            const estimatedTokens = JSON.stringify(messages).length / 4;
+            await rateLimiter.acquire(activeConfig, estimatedTokens);
         }
 
         const endpoint = apiURL.endsWith("/") ? `${apiURL}chat/completions` : `${apiURL}/chat/completions`;
@@ -182,6 +203,9 @@ export class OpenAIService {
             throw error;
         } finally {
             this.currentController = null;
+            if (activeConfig) {
+                rateLimiter.release(activeConfig.id);
+            }
         }
     }
 
@@ -193,16 +217,34 @@ export class OpenAIService {
     async chatCompletionStream(
         messages: AnyOpenAIMessage[],
         callbacks: StreamCallbacks,
-        configOverride?: { apiURL?: string; apiKey?: string; model?: string },
+        configOverride?: { apiURL?: string; apiKey?: string; model?: string; temperature?: number; max_tokens?: number },
         tools?: ToolDefinition[]
     ): Promise<void> {
-        const prefs = this.getPrefs();
-        const apiURL = configOverride?.apiURL || prefs.apiURL;
-        const apiKey = configOverride?.apiKey || prefs.apiKey;
-        const model = configOverride?.model || prefs.model;
+        let prefs = this.getPrefs();
+        let apiURL = configOverride?.apiURL || prefs.apiURL;
+        let apiKey = configOverride?.apiKey || prefs.apiKey;
+        let model = configOverride?.model || prefs.model;
+
+        // Try to get full config for rate limiting if no override provided or if override matches active
+        // Simplification: Always check active model config if no override, or if override matches
+        const activeConfig = getActiveModelConfig();
+        // If configOverride is provided, we might not have the ID to check rate limits against the correct model buffer.
+        // However, usually configOverride is used for specialized calls. 
+        // Ideally we should pass the full config object instead of partial override.
+        // For now, if activeConfig matches the apiKey/model, we use it.
+        const effectiveConfig = (activeConfig && (!configOverride || (configOverride.model === activeConfig.model)))
+            ? activeConfig
+            : undefined;
 
         if (!apiKey) {
             throw new Error("OpenAI API Key is missing. Please set it in preferences.");
+        }
+
+        // Apply Rate Limiting
+        const rateLimiter = RateLimiter.getInstance();
+        if (effectiveConfig) {
+            const estimatedTokens = JSON.stringify(messages).length / 4;
+            await rateLimiter.acquire(effectiveConfig, estimatedTokens);
         }
 
         const endpoint = apiURL.endsWith("/") ? `${apiURL}chat/completions` : `${apiURL}/chat/completions`;
@@ -235,6 +277,13 @@ export class OpenAIService {
                 messages,
                 stream: true,
             };
+
+            if (configOverride?.temperature !== undefined) {
+                requestBody.temperature = configOverride.temperature;
+            }
+            if (configOverride?.max_tokens !== undefined) {
+                requestBody.max_tokens = configOverride.max_tokens;
+            }
 
             // Add tools if provided
             if (tools && tools.length > 0) {
@@ -362,6 +411,9 @@ export class OpenAIService {
             throw error;
         } finally {
             this.currentController = null;
+            if (effectiveConfig) {
+                rateLimiter.release(effectiveConfig.id);
+            }
         }
     }
 

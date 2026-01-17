@@ -41,6 +41,10 @@ export interface AgenticChatOptions {
     pastedImages?: { id: string; image: string; mimeType: string }[];
     /** Handler for inline permission requests */
     permissionHandler?: (toolCallId: string, toolName: string) => Promise<boolean>;
+    /** Chat temperature */
+    temperature?: number;
+    /** Max tokens */
+    maxTokens?: number;
 }
 
 /**
@@ -447,6 +451,8 @@ export async function handleAgenticChat(
         apiURL: activeModel.apiURL,
         apiKey: activeModel.apiKey,
         model: activeModel.model,
+        temperature: options.temperature,
+        max_tokens: options.maxTokens,
     } : undefined;
 
     let fullResponse = "";

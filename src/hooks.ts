@@ -355,15 +355,29 @@ async function searchPdfsForSelectedItems() {
   const timeoutMs = (Zotero.Prefs.get(
     `${addon.data.config.prefsPrefix}.pdfSearchTimeout`,
   ) as number) || 60000;
-  const concurrency = (Zotero.Prefs.get(
-    `${addon.data.config.prefsPrefix}.pdfSearchConcurrency`,
-  ) as number) || 5;
+  const activeConfig = getActiveModelConfig();
+  let concurrency = 5;
+  if (activeConfig?.rateLimit?.type === 'concurrency') {
+    concurrency = activeConfig.rateLimit.value;
+  } else if (activeConfig?.rateLimit?.type === 'rpm') {
+    // For RPM, we limit concurrency to the RPM value (capped at 10)
+    // This prevents a huge queue buildup that causes timeouts.
+    // e.g. if RPM is 2, running 10 parallel tasks ensures the 10th waits ~5 minutes!
+    // By matching concurrency to RPM, we ensure a smooth flow with minimal waiting.
+    concurrency = Math.max(1, Math.min(10, activeConfig.rateLimit.value));
+  } else if (activeConfig?.rateLimit?.type === 'tpm') {
+    concurrency = 10;
+  }
 
   // Run concurrent search
   const results = await runConcurrentTasks({
     tasks: itemsToSearch.map((item, index) => ({ item, index })),
     concurrency,
-    timeoutMs,
+    // If using strict rate limiting (RPM/TPM), we need a much larger timeout 
+    // because tasks will sit in the rate limiter queue.
+    timeoutMs: (activeConfig?.rateLimit?.type === 'rpm' || activeConfig?.rateLimit?.type === 'tpm')
+      ? Math.max(timeoutMs, 300000) // 5 minutes if rate limited
+      : timeoutMs,
     maxRetries: 3,
     retryDelayMs: 2000,
 
@@ -451,10 +465,15 @@ async function processAllLibraryItems() {
  * Process parent items in parallel batches.
  */
 async function processParentItemsInBatches(parentItems: Zotero.Item[]) {
-  const maxConcurrent =
-    (Zotero.Prefs.get(
-      `${addon.data.config.prefsPrefix}.datalabMaxConcurrent`,
-    ) as number) || 5;
+  const activeConfig = getActiveModelConfig();
+  let maxConcurrent = 5;
+  if (activeConfig?.rateLimit?.type === 'concurrency') {
+    maxConcurrent = activeConfig.rateLimit.value;
+  } else if (activeConfig?.rateLimit?.type === 'rpm') {
+    maxConcurrent = Math.max(1, Math.min(10, activeConfig.rateLimit.value));
+  } else if (activeConfig?.rateLimit?.type === 'tpm') {
+    maxConcurrent = 10;
+  }
   ztoolkit.log(
     `DataLab: Processing ${parentItems.length} items with max concurrent ${maxConcurrent}`,
   );

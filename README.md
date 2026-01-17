@@ -13,7 +13,7 @@
     <img src="https://img.shields.io/badge/License-MIT-blue.svg" />
   </a>
   <a href="https://github.com/dralkh/seerai/releases">
-    <img src="https://img.shields.io/badge/Version-1.5.3-blue" />
+    <img src="https://img.shields.io/badge/Version-1.5.4-blue" />
   </a>
 </p>
 
@@ -68,6 +68,7 @@
   - **Source Link**: Fallback to source links if PDFs are unavailable.
   - **Status Indicators**: Clear feedback on import status (⬇️ Importing, ✅ Imported, ⚠️ Failed).
 - **Global Search Scope**: Searching now extends across all libraries, including personal and group collections.
+- **Advanced Boolean Search**: Robust support for nested logic (AND/OR/NOT), implicit phrasing, and markdown-aware matching.
 - **Smart Regex matching**: Improved search precision with intelligent handling of word boundaries and special characters.
 
 ### Agentic Chat & Tool Use
@@ -110,6 +111,7 @@
     - 24-32g Vram - gpt-oss-20b
     - 48-64g Vram - QwQ-32B
     - 96-128g Vram - Qwen3-Next-80B-A3B-Instruct
+- **Smart Rate Limiting**: Per-model configuration for concurrency, RPM, and TPM to prevent provider errors.
 - **Per-Conversation Models**: Switch models dynamically based on the task complexity.
 
 ---

@@ -14,6 +14,8 @@ export interface TableColumn {
     type: 'text' | 'date' | 'number' | 'computed';
     computeFrom?: string; // For AI-generated columns, describes the source
     aiPrompt?: string;    // Custom AI prompt for generating this column's content
+    temperature?: number; // Custom temperature (overrides table/global)
+    maxTokens?: number;   // Custom max tokens (overrides table/global)
 }
 
 // Default columns that every table has
@@ -88,7 +90,8 @@ export interface TableConfig {
     sortBy?: string;
     sortOrder?: 'asc' | 'desc';
     filterQuery?: string;
-    responseLength: number; // For AI-generated content length control
+    responseLength?: number; // For AI-generated content length control
+    temperature?: number;   // Default temperature for table generation
     // Filter settings
     filterLibraryId?: number | null;      // Filter to specific library
     filterCollectionId?: number | null;    // Filter to specific collection
@@ -120,7 +123,7 @@ export const defaultTableConfig: Omit<TableConfig, 'id' | 'createdAt' | 'updated
     sortBy: 'title',
     sortOrder: 'asc',
     filterQuery: '',
-    responseLength: 100, // characters
+    responseLength: undefined, // characters (Default)
     filterLibraryId: null,
     filterCollectionId: null,
     pageSize: 25,
@@ -231,12 +234,12 @@ export interface SearchColumnConfig {
     columns: SearchAnalysisColumn[];
     // Cache of generated values: { paperId: { columnId: value } }
     generatedData: { [paperId: string]: { [columnId: string]: string } };
-    responseLength: number;
+    responseLength?: number;
 }
 
 // Default empty search column configuration
 export const defaultSearchColumnConfig: SearchColumnConfig = {
     columns: [],
     generatedData: {},
-    responseLength: 100 // Default to short/concise
+    responseLength: undefined // Default to provider default
 };

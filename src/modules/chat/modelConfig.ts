@@ -231,6 +231,15 @@ export function validateModelConfig(config: Partial<AIModelConfig>): string[] {
         errors.push("Model is required");
     }
 
+    if (config.rateLimit) {
+        if (!['tpm', 'rpm', 'concurrency'].includes(config.rateLimit.type)) {
+            errors.push("Invalid rate limit type");
+        }
+        if (typeof config.rateLimit.value !== 'number' || config.rateLimit.value <= 0) {
+            errors.push("Rate limit value must be a positive number");
+        }
+    }
+
     return errors;
 }
 

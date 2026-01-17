@@ -893,7 +893,7 @@ async function loadSearchColumnConfig(): Promise<SearchColumnConfig> {
     return {
       columns: parsed.columns || [],
       generatedData: parsed.generatedData || {},
-      responseLength: parsed.responseLength || 100,
+      responseLength: parsed.responseLength,
     };
   } catch (e) {
     Zotero.debug(`[seerai] Error loading search column config: ${e}`);
@@ -8022,6 +8022,22 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     }
     toolbar.appendChild(searchInput);
 
+    // Search Help Icon
+    const searchHelp = ztoolkit.UI.createElement(doc, "span", {
+      properties: { innerText: "❗" },
+      attributes: {
+        title: "Search Logic Supported:\n• AND, OR, NOT\n• ( ) Grouping\n• \"Exact Phrase\"\nExample: \"Climate Change\" AND (Policy OR Mitigation)",
+      },
+      styles: {
+        fontSize: "14px",
+        cursor: "help",
+        marginLeft: "4px",
+        marginRight: "4px",
+        opacity: "0.7",
+      },
+    });
+    toolbar.appendChild(searchHelp);
+
     // Add Papers button
     const addPapersBtn = ztoolkit.UI.createElement(doc, "button", {
       properties: {
@@ -9575,31 +9591,29 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
       }
     };
 
-    // Process a single task
-    const processTask = async (task: GenerationTask): Promise<void> => {
-      try {
-        // Get note IDs fresh (might have changed? unlikely but safe)
+    // Process tasks using runConcurrentTasks
+    updateProgress();
+    await runConcurrentTasks<GenerationTask, string | null>({
+      tasks,
+      concurrency: maxConcurrent,
+      maxRetries: 3,
+      executor: async (task) => {
         const noteIds = task.item.getNotes();
         let content = "";
 
         if (noteIds.length > 0) {
-          // Only generate from notes
           content = await this.generateColumnContent(
             task.item,
             task.col,
-            noteIds,
+            noteIds
           );
         } else {
-          // Try to generate from PDF (indexed text or OCR)
-          try {
-            content = await this.generateFromPDF(task.item, task.col);
-          } catch (err) {
-            Zotero.debug(
-              `[seerai] Failed to generate from PDF for item ${task.paperId}: ${err}`,
-            );
-          }
+          content = await this.generateFromPDF(task.item, task.col);
         }
-
+        return content;
+      },
+      onTaskComplete: (task, content) => {
+        completed++;
         if (content) {
           // Update DOM immediately
           task.td.innerHTML = parseMarkdown(content);
@@ -9608,7 +9622,7 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
 
           // Update Data
           const row = currentTableData?.rows.find(
-            (r) => r.paperId === task.paperId,
+            (r) => r.paperId === task.paperId
           );
           if (row) {
             row.data[task.col.id] = content;
@@ -9634,25 +9648,21 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
             "No notes found. Use '🔍 Extract with ocr' to create notes first.";
           task.td.style.cursor = "default";
         }
-      } catch (e) {
-        Zotero.debug(
-          `[seerai] Error generating for ${task.paperId}/${task.col.id}: ${e}`,
-        );
-        task.td.innerHTML = `<span style="color: #c62828; font-size: 11px;">Error</span>`;
-        task.td.title = String(e);
-        failed++;
-      } finally {
-        completed++;
         updateProgress();
-      }
-    };
-
-    // Process tasks in parallel batches
-    updateProgress();
-    for (let i = 0; i < tasks.length; i += maxConcurrent) {
-      const batch = tasks.slice(i, i + maxConcurrent);
-      await Promise.all(batch.map(processTask));
-    }
+      },
+      onTaskError: (task, error, index, willRetry) => {
+        if (!willRetry) {
+          completed++;
+          failed++;
+          task.td.innerHTML = `<span style="color: #c62828; font-size: 11px;">Error</span>`;
+          task.td.title = String(error);
+          updateProgress();
+        }
+        Zotero.debug(
+          `[seerai] Error generating for ${task.paperId}/${task.col.id}: ${error}${willRetry ? " (will retry)" : ""}`
+        );
+      },
+    });
 
     // Save at the end
     const tableStore = getTableStore();
@@ -9787,9 +9797,12 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     let regenerated = 0;
     let failed = 0;
 
-    // Process a single task
-    const processTask = async (task: RegenerationTask): Promise<void> => {
-      try {
+    // Process tasks using runConcurrentTasks
+    await runConcurrentTasks<RegenerationTask, string | null>({
+      tasks,
+      concurrency: maxConcurrent,
+      maxRetries: 3,
+      executor: async (task) => {
         const noteIds = task.item.getNotes();
         let content = "";
 
@@ -9797,25 +9810,22 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
           content = await this.generateColumnContent(
             task.item,
             task.col,
-            noteIds,
+            noteIds
           );
         } else {
-          try {
-            content = await this.generateFromPDF(task.item, task.col);
-          } catch (err) {
-            Zotero.debug(
-              `[seerai] Failed to regenerate from PDF for item ${task.paperId}: ${err}`,
-            );
-          }
+          content = await this.generateFromPDF(task.item, task.col);
         }
-
+        return content;
+      },
+      onTaskComplete: (task, content) => {
+        completed++;
         if (content) {
           task.td.innerHTML = parseMarkdown(content);
           task.td.style.cursor = "pointer";
           task.td.style.backgroundColor = "";
 
           const row = currentTableData?.rows.find(
-            (r) => r.paperId === task.paperId,
+            (r) => r.paperId === task.paperId
           );
           if (row) {
             row.data[task.col.id] = content;
@@ -9837,23 +9847,19 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
           task.td.innerHTML = `<span style="color: var(--text-tertiary); font-size: 11px; font-style: italic;">Failed to regenerate</span>`;
           task.td.style.cursor = "default";
         }
-      } catch (e) {
+      },
+      onTaskError: (task, error, index, willRetry) => {
+        if (!willRetry) {
+          completed++;
+          failed++;
+          task.td.innerHTML = `<span style="color: #c62828; font-size: 11px;">Error</span>`;
+          task.td.title = String(error);
+        }
         Zotero.debug(
-          `[seerai] Error regenerating for ${task.paperId}/${task.col.id}: ${e}`,
+          `[seerai] Error regenerating for ${task.paperId}/${task.col.id}: ${error}${willRetry ? " (will retry)" : ""}`
         );
-        task.td.innerHTML = `<span style="color: #c62828; font-size: 11px;">Error</span>`;
-        task.td.title = String(e);
-        failed++;
-      } finally {
-        completed++;
-      }
-    };
-
-    // Process tasks in parallel batches
-    for (let i = 0; i < tasks.length; i += maxConcurrent) {
-      const batch = tasks.slice(i, i + maxConcurrent);
-      await Promise.all(batch.map(processTask));
-    }
+      },
+    });
 
     // Save at the end
     const tableStore = getTableStore();
@@ -10701,12 +10707,21 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
       table.generatedData = {};
     }
 
-    // Get max concurrent from settings
-    const maxConcurrent =
-      (Zotero.Prefs.get(
-        `${addon.data.config.prefsPrefix}.aiMaxConcurrent`,
-      ) as number) || 5;
-    Zotero.debug(`[seerai] Table generation max concurrent: ${maxConcurrent}`);
+    // Get max concurrent from active model settings
+    const activeConfig = getActiveModelConfig();
+    let maxConcurrent = 5;
+    if (activeConfig?.rateLimit?.type === 'concurrency') {
+      maxConcurrent = activeConfig.rateLimit.value;
+    } else if (activeConfig?.rateLimit?.type === 'rpm') {
+      maxConcurrent = Math.max(1, Math.min(10, activeConfig.rateLimit.value));
+    } else if (activeConfig?.rateLimit?.type === 'tpm') {
+      maxConcurrent = 10;
+    }
+    const timeoutMs = (activeConfig?.rateLimit?.type === 'rpm' || activeConfig?.rateLimit?.type === 'tpm')
+      ? 300000 // 5 minutes if rate limited
+      : 60000;
+
+    Zotero.debug(`[seerai] Table generation max concurrent: ${maxConcurrent}, timeout: ${timeoutMs}ms`);
 
     // Build task list
     interface GenerationTask {
@@ -10783,38 +10798,37 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
       }
     }
 
-    // Process tasks in batches using maxConcurrent
-    for (let i = 0; i < tasks.length; i += maxConcurrent) {
-      const batch = tasks.slice(i, i + maxConcurrent);
-      const results = await Promise.all(
-        batch.map(async (task) => {
-          try {
-            const content = await this.generateColumnContentFromText(
-              task.item,
-              task.col,
-              task.noteContent
-            );
-            return { task, content, error: null };
-          } catch (e) {
-            return { task, content: null, error: `Error generating ${task.col.name} for item ${task.paperId}: ${e}` };
-          }
-        })
-      );
-
-      // Apply results
-      for (const result of results) {
-        if (result.error) {
-          errors.push(result.error);
-          Zotero.debug(`[seerai] ${result.error}`);
-        } else if (result.content) {
-          table.generatedData![result.task.paperId]![result.task.col.id] = result.content;
+    await runConcurrentTasks<GenerationTask, string | null>({
+      tasks,
+      concurrency: maxConcurrent,
+      timeoutMs,
+      maxRetries: 3,
+      executor: async (task) => {
+        return await this.generateColumnContentFromText(
+          task.item,
+          task.col,
+          task.noteContent
+        );
+      },
+      onTaskComplete: (task, content) => {
+        if (content) {
+          table.generatedData![task.paperId]![task.col.id] = content;
           generatedCount++;
           Zotero.debug(
-            `[seerai] Generated: item=${result.task.paperId} col=${result.task.col.name} length=${result.content.length}`
+            `[seerai] Generated: item=${task.paperId} col=${task.col.name} length=${content.length}`
           );
         }
-      }
-    }
+      },
+      onTaskError: (task, error, index, willRetry) => {
+        const errorMsg = `Error generating ${task.col.name} for item ${task.paperId}: ${error.message}`;
+        if (!willRetry) {
+          errors.push(errorMsg);
+        }
+        Zotero.debug(
+          `[seerai] ${errorMsg}${willRetry ? " (will retry)" : ""}`
+        );
+      },
+    });
 
     // Save the updated table config
     await tableStore.saveConfig(table);
@@ -10864,11 +10878,11 @@ Format in clean Markdown with clear headings. Be analytical and substantive, not
     sourceText: string,
   ): Promise<string> {
     const paperTitle = (item.getField("title") as string) || "Untitled";
-    const responseLength = currentTableConfig?.responseLength ?? 100;
+    const effectiveMaxTokens = col.maxTokens ?? currentTableConfig?.responseLength;
 
     // Build a targeted prompt using column title and description
     const lengthInstruction =
-      responseLength === 0 ? "" : `Be concise (max ${responseLength} words).`;
+      (effectiveMaxTokens === 0 || effectiveMaxTokens === undefined) ? "" : `Be concise (max ${effectiveMaxTokens} words).`;
 
     let columnPrompt = "";
     if (col.aiPrompt) {
@@ -10906,6 +10920,8 @@ Task: ${columnPrompt}`;
       apiURL: activeModel.apiURL,
       apiKey: activeModel.apiKey,
       model: activeModel.model,
+      temperature: col.temperature ?? currentTableConfig?.temperature ?? undefined,
+      max_tokens: effectiveMaxTokens,
     };
 
     // Use non-streaming completion for simpler cell generation
@@ -12800,7 +12816,7 @@ You MUST call the generate_tags function.`;
         sortBy: "title",
         sortOrder: "asc",
         filterQuery: "",
-        responseLength: 100,
+        responseLength: undefined, // Default to provider default
         filterLibraryId: null,
         filterCollectionId: null,
         pageSize: 25,
@@ -14514,16 +14530,35 @@ You MUST call the generate_tags function.`;
         Zotero.debug(`[seerai:search] Starting search for: "${filterQuery}" across ${allRows.length} rows`);
 
         filteredRows = allRows.filter((row) => {
-          // Concatenated Phrase Search: Treat row as a single text block
-          // This ensures searches like "**Verdict:** NO" only match if they appear contiguously,
-          // avoiding false positives where terms are split across columns (e.g. "Verdict: MAYBE" ... "if NO").
-          const blob = Object.values(row.data)
-            .map((v) => String(v || ""))
+          // Identify all search targets (column values)
+          const rawSearchTargets = Object.values(row.data).map(v => String(v || ""));
+
+          // Strip markdown from targets to allow clean phrase matching
+          // e.g. "**Verdict:** no" -> "Verdict: no"
+          const stripMarkdown = (t: string) => t
+            .replace(/[*_~`]/g, '')
+            .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+          const cleanSearchTargets = rawSearchTargets.map(stripMarkdown);
+
+          // Use advancedSearch which now handles Boolean logic if detected
+          // We search against the CLEAN (stripped) text to match user intent
+          // We also search against RAW text to support searching for markdown symbols if needed
+          // But prioritizing clean text ensures "Verdict: no" matches "**Verdict:** no" correctly
+          const { matches } = advancedSearch(filterQuery, [...cleanSearchTargets, ...rawSearchTargets]);
+          if (matches) return true;
+
+          // Fallback: Try markdown-stripped match for phrase search if advancedSearch didn't match
+          // (This handles cases where the user types a literal phrase that might be broken by Boolean tokenization if it contains AND/OR/NOT but isn't meant as a Boolean query)
+          const rawBlob = rawSearchTargets
             .join(" ")
             .replace(/<think>[\s\S]*?<\/think>/gi, "")
             .toLowerCase();
 
-          return blob.includes(filterQuery.toLowerCase().trim());
+          const target = filterQuery.toLowerCase().trim();
+          if (rawBlob.includes(target)) return true;
+
+          return stripMarkdown(rawBlob).includes(stripMarkdown(target));
         });
 
         Zotero.debug(`[seerai:search] Result: ${filteredRows.length}/${allRows.length} rows match "${filterQuery}"`);
@@ -15025,6 +15060,65 @@ You MUST call the generate_tags function.`;
     }) as HTMLTextAreaElement;
     addSection.appendChild(newColumnDesc);
 
+    const getEffectiveTableTemp = () => currentTableConfig?.temperature ?? 0.7;
+    const getMaxLenPlaceholder = () => {
+      const tableLen = currentTableConfig?.responseLength;
+      if (tableLen === undefined) return "Default";
+      if (tableLen === 0) return "Limitless";
+      return String(tableLen);
+    };
+
+    const managerAiParams = ztoolkit.UI.createElement(doc, "div", {
+      styles: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: "8px",
+        backgroundColor: "var(--background-secondary)",
+        border: "1px solid var(--border-secondary)",
+        borderRadius: "6px",
+        marginTop: "4px"
+      }
+    });
+
+    const managerAiParamsTitle = ztoolkit.UI.createElement(doc, "div", {
+      properties: { innerText: "AI Parameters" },
+      styles: { fontSize: "10px", fontWeight: "700", color: "var(--highlight-primary)", marginBottom: "-2px", textTransform: "uppercase" }
+    });
+    managerAiParams.appendChild(managerAiParamsTitle);
+
+    // Temp
+    const managerTempHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", fontSize: "10px", fontWeight: "600", color: "var(--text-secondary)" }
+    });
+    const managerTempLabelText = (val: number) => `Temp: Default (${val.toFixed(1)})`;
+    const managerTempLabel = ztoolkit.UI.createElement(doc, "span", { properties: { innerText: managerTempLabelText(getEffectiveTableTemp()) } });
+    managerTempHeader.appendChild(managerTempLabel);
+    managerAiParams.appendChild(managerTempHeader);
+
+    const managerTempSlider = ztoolkit.UI.createElement(doc, "input", {
+      attributes: { type: "range", min: "0", max: "2", step: "0.1", value: String(getEffectiveTableTemp()) },
+      styles: { width: "100%", cursor: "pointer", height: "14px" }
+    }) as HTMLInputElement;
+    managerTempSlider.addEventListener("input", () => {
+      managerTempLabel.innerText = managerTempLabelText(parseFloat(managerTempSlider.value));
+    });
+    managerAiParams.appendChild(managerTempSlider);
+
+    // Max Len
+    const managerMaxLenRow = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "10px", fontWeight: "600", color: "var(--text-secondary)", marginTop: "2px" }
+    });
+    managerMaxLenRow.appendChild(ztoolkit.UI.createElement(doc, "span", { properties: { innerText: "Max Resp. Length:" } }));
+    const managerMaxLenInput = ztoolkit.UI.createElement(doc, "input", {
+      attributes: { type: "number", min: "1", placeholder: getMaxLenPlaceholder() },
+      styles: { width: "60px", padding: "2px 4px", fontSize: "10px", border: "1px solid var(--border-primary)", borderRadius: "4px", backgroundColor: "var(--background-primary)", color: "var(--text-primary)" }
+    }) as HTMLInputElement;
+    managerMaxLenRow.appendChild(managerMaxLenInput);
+    managerAiParams.appendChild(managerMaxLenRow);
+
+    addSection.appendChild(managerAiParams);
+
     const addColumnBtn = ztoolkit.UI.createElement(doc, "button", {
       properties: { innerText: "Add Column" },
       styles: {
@@ -15045,6 +15139,9 @@ You MUST call the generate_tags function.`;
             const name = newColumnInput.value.trim();
             const aiPrompt = newColumnDesc.value.trim();
             if (name && currentTableConfig) {
+              const customTemp = parseFloat(managerTempSlider.value);
+              const customMaxTokens = parseInt(managerMaxLenInput.value);
+
               const newColumn: TableColumn = {
                 id: `custom_${Date.now()}`,
                 name,
@@ -15057,6 +15154,8 @@ You MUST call the generate_tags function.`;
                 aiPrompt:
                   aiPrompt ||
                   `Extract information related to "${name}" from this paper.`,
+                temperature: customTemp !== getEffectiveTableTemp() ? customTemp : undefined,
+                maxTokens: !isNaN(customMaxTokens) ? customMaxTokens : undefined,
               };
               currentTableConfig.columns.push(newColumn);
               const tableStore = getTableStore();
@@ -15238,7 +15337,68 @@ You MUST call the generate_tags function.`;
         boxSizing: "border-box",
       },
     }) as HTMLTextAreaElement;
+    promptInput.addEventListener("click", (e) => e.stopPropagation());
+    promptInput.addEventListener("mousedown", (e) => e.stopPropagation());
     content.appendChild(promptInput);
+
+    const getEffectiveTableTemp = () => currentTableConfig?.temperature ?? 0.7;
+    const getMaxLenPlaceholder = () => {
+      const tableLen = currentTableConfig?.responseLength;
+      if (tableLen === undefined) return "Default";
+      if (tableLen === 0) return "Limitless";
+      return String(tableLen);
+    };
+
+    const aiParamsContainer = ztoolkit.UI.createElement(doc, "div", {
+      styles: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "8px",
+        padding: "10px",
+        backgroundColor: "rgba(0,0,0,0.03)",
+        border: "1px solid var(--border-secondary)",
+        borderRadius: "6px",
+        marginTop: "6px"
+      }
+    });
+
+    const aiParamsTitle = ztoolkit.UI.createElement(doc, "div", {
+      properties: { innerText: "AI Parameters" },
+      styles: { fontSize: "10px", fontWeight: "800", color: "var(--highlight-primary)", marginBottom: "2px", textTransform: "uppercase", borderBottom: "1px solid rgba(128,128,128,0.1)", paddingBottom: "2px" }
+    });
+    aiParamsContainer.appendChild(aiParamsTitle);
+
+    // Temperature Slider
+    const tempHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", fontSize: "10px", fontWeight: "600", color: "var(--text-secondary)" }
+    });
+    const tempLabelText = (val: number) => `Temp: Default (${val.toFixed(1)})`;
+    const tempLabel = ztoolkit.UI.createElement(doc, "span", { properties: { innerText: tempLabelText(getEffectiveTableTemp()) } });
+    tempHeader.appendChild(tempLabel);
+    aiParamsContainer.appendChild(tempHeader);
+
+    const tempSlider = ztoolkit.UI.createElement(doc, "input", {
+      attributes: { type: "range", min: "0", max: "2", step: "0.1", value: String(getEffectiveTableTemp()) },
+      styles: { width: "100%", cursor: "pointer", height: "14px" }
+    }) as HTMLInputElement;
+    tempSlider.addEventListener("input", () => {
+      tempLabel.innerText = tempLabelText(parseFloat(tempSlider.value));
+    });
+    aiParamsContainer.appendChild(tempSlider);
+
+    // Max Length Input
+    const maxLenRow = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "10px", fontWeight: "600", color: "var(--text-secondary)", marginTop: "4px" }
+    });
+    maxLenRow.appendChild(ztoolkit.UI.createElement(doc, "span", { properties: { innerText: "Max Response Length:" } }));
+    const maxLenInput = ztoolkit.UI.createElement(doc, "input", {
+      attributes: { type: "number", min: "1", placeholder: getMaxLenPlaceholder() },
+      styles: { width: "60px", padding: "2px 4px", fontSize: "10px", border: "1px solid var(--border-primary)", borderRadius: "4px", backgroundColor: "var(--background-primary)", color: "var(--text-primary)" }
+    }) as HTMLInputElement;
+    maxLenRow.appendChild(maxLenInput);
+    aiParamsContainer.appendChild(maxLenRow);
+
+    content.appendChild(aiParamsContainer);
 
     // Add button
     const addBtn = ztoolkit.UI.createElement(doc, "button", {
@@ -15253,6 +15413,7 @@ You MUST call the generate_tags function.`;
         fontWeight: "600",
         fontSize: "12px",
         width: "100%",
+        marginTop: "4px"
       },
       listeners: [
         {
@@ -15266,6 +15427,9 @@ You MUST call the generate_tags function.`;
 
             if (currentTableConfig) {
               const aiPrompt = promptInput.value.trim();
+              const customTemp = parseFloat(tempSlider.value);
+              const customMaxTokens = parseInt(maxLenInput.value);
+
               const newColumn: TableColumn = {
                 id: `custom_${Date.now()}`,
                 name,
@@ -15278,6 +15442,8 @@ You MUST call the generate_tags function.`;
                 aiPrompt:
                   aiPrompt ||
                   `Extract information related to "${name}" from this paper.`,
+                temperature: customTemp !== getEffectiveTableTemp() ? customTemp : undefined,
+                maxTokens: !isNaN(customMaxTokens) ? customMaxTokens : undefined,
               };
               currentTableConfig.columns.push(newColumn);
               const tableStore = getTableStore();
@@ -15461,6 +15627,8 @@ You MUST call the generate_tags function.`;
         padding: "12px",
         boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
         width: "280px",
+        maxHeight: "450px",
+        overflowY: "auto",
         display: "flex",
         flexDirection: "column",
         gap: "10px",
@@ -15544,6 +15712,137 @@ You MUST call the generate_tags function.`;
       autoSave();
     });
     popover.appendChild(promptInput);
+
+    const paramContainer = ztoolkit.UI.createElement(doc, "div", {
+      styles: {
+        display: "flex",
+        flexDirection: "column",
+        gap: "12px",
+        padding: "12px",
+        backgroundColor: "rgba(0,0,0,0.03)",
+        border: "1px solid var(--border-secondary)",
+        borderRadius: "8px",
+        marginTop: "10px",
+      }
+    });
+
+    const paramTitle = ztoolkit.UI.createElement(doc, "div", {
+      properties: { innerText: "AI Parameters" },
+      styles: {
+        fontSize: "11px",
+        fontWeight: "800",
+        color: "var(--highlight-primary)",
+        marginBottom: "2px",
+        textTransform: "uppercase",
+        letterSpacing: "0.8px",
+        borderBottom: "1px solid rgba(128,128,128,0.2)",
+        paddingBottom: "4px"
+      }
+    });
+    paramContainer.appendChild(paramTitle);
+
+    // Temperature
+    const tempRow = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", flexDirection: "column", gap: "4px" }
+    });
+
+    const tempHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", fontSize: "11px", fontWeight: "600", color: "var(--text-secondary)" }
+    });
+    const getEffectiveTableTemp = () => currentTableConfig?.temperature ?? 0.7;
+    const getTempDisplayText = (val?: number) => {
+      if (val !== undefined) return val.toFixed(1);
+      const tableTemp = currentTableConfig?.temperature;
+      if (tableTemp !== undefined) return `Default (${tableTemp.toFixed(1)})`;
+      return "Default (0.7)";
+    };
+
+    const tempLabel = ztoolkit.UI.createElement(doc, "span", { properties: { innerText: `Temperature: ${getTempDisplayText(column.temperature)}` } });
+    const tempResetBtn = ztoolkit.UI.createElement(doc, "span", {
+      properties: { innerText: "↺", title: "Reset to Default" },
+      styles: { cursor: "pointer", display: column.temperature === undefined ? "none" : "inline-block", marginLeft: "6px" }
+    });
+    tempHeader.appendChild(tempLabel);
+    tempHeader.appendChild(tempResetBtn);
+    tempRow.appendChild(tempHeader);
+
+    const tempSlider = ztoolkit.UI.createElement(doc, "input", {
+      attributes: { type: "range", min: "0", max: "2", step: "0.1", value: String(column.temperature ?? getEffectiveTableTemp()) },
+      styles: { width: "100%", cursor: "pointer" }
+    }) as HTMLInputElement;
+    tempRow.appendChild(tempSlider);
+    paramContainer.appendChild(tempRow);
+
+    tempSlider.addEventListener("input", () => {
+      const val = parseFloat(tempSlider.value);
+      column.temperature = val;
+      tempLabel.innerText = `Temperature: ${val.toFixed(1)}`;
+      tempResetBtn.style.display = "inline-block";
+      autoSave();
+    });
+
+    tempResetBtn.addEventListener("click", () => {
+      column.temperature = undefined;
+      tempLabel.innerText = `Temperature: ${getTempDisplayText(undefined)}`;
+      tempSlider.value = String(getEffectiveTableTemp());
+      tempResetBtn.style.display = "none";
+      autoSave();
+    });
+
+    // Max Response Length Slider
+    const maxLengthRow = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", flexDirection: "column", gap: "4px" }
+    });
+
+    const getMaxLenDisplayText = (val?: number) => {
+      if (val !== undefined) {
+        if (val === 0) return "Limitless";
+        return `${val} words`;
+      }
+      const tableLen = currentTableConfig?.responseLength;
+      if (tableLen === undefined) return "Default";
+      if (tableLen === 0) return "Default (Limitless)";
+      return `Default (${tableLen} words)`;
+    };
+
+    const maxLenHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", fontSize: "11px", fontWeight: "600", color: "var(--text-secondary)" }
+    });
+    const maxLenLabel = ztoolkit.UI.createElement(doc, "span", { properties: { innerText: `Max Length: ${getMaxLenDisplayText(column.maxTokens)}` } });
+    const maxLenResetBtn = ztoolkit.UI.createElement(doc, "span", {
+      properties: { innerText: "↺", title: "Reset to Default" },
+      styles: { cursor: "pointer", display: column.maxTokens === undefined ? "none" : "inline-block", marginLeft: "6px" }
+    });
+    maxLenHeader.appendChild(maxLenLabel);
+    maxLenHeader.appendChild(maxLenResetBtn);
+    maxLengthRow.appendChild(maxLenHeader);
+
+    const getEffectiveMaxLen = () => currentTableConfig?.responseLength ?? 100;
+
+    const maxLenSlider = ztoolkit.UI.createElement(doc, "input", {
+      attributes: { type: "range", min: "0", max: "2000", step: "10", value: String(column.maxTokens ?? getEffectiveMaxLen()) },
+      styles: { width: "100%", cursor: "pointer" }
+    }) as HTMLInputElement;
+    maxLengthRow.appendChild(maxLenSlider);
+    paramContainer.appendChild(maxLengthRow);
+
+    maxLenSlider.addEventListener("input", () => {
+      const val = parseInt(maxLenSlider.value);
+      column.maxTokens = val;
+      maxLenLabel.innerText = `Max Length: ${getMaxLenDisplayText(val)}`;
+      maxLenResetBtn.style.display = "inline-block";
+      autoSave();
+    });
+
+    maxLenResetBtn.addEventListener("click", () => {
+      column.maxTokens = undefined;
+      maxLenLabel.innerText = `Max Length: ${getMaxLenDisplayText(undefined)}`;
+      maxLenSlider.value = String(getEffectiveMaxLen());
+      maxLenResetBtn.style.display = "none";
+      autoSave();
+    });
+
+    popover.appendChild(paramContainer);
 
     // Remove Column button
     const removeBtn = ztoolkit.UI.createElement(doc, "button", {
@@ -17038,22 +17337,42 @@ You MUST call the generate_tags function.`;
     const lengthSection = ztoolkit.UI.createElement(doc, "div", {
       styles: { display: "flex", flexDirection: "column", gap: "8px" },
     });
-    const currentLen = currentTableConfig?.responseLength ?? 100;
-    const lenText =
-      currentLen >= 4192 || currentLen === 0
-        ? "Limitless"
-        : `${currentLen} words`;
+
+    const currentLen = currentTableConfig?.responseLength;
+    const getLenText = (len?: number) => {
+      if (len === undefined) return "Default";
+      if (len === 0 || len >= 4192) return "Limitless";
+      return `${len} words`;
+    };
+
     const lenLabel = ztoolkit.UI.createElement(doc, "div", {
-      properties: { innerText: `Max Response Length: ${lenText}` },
+      properties: { innerText: `Max Response Length: ${getLenText(currentLen)}` },
       styles: { fontSize: "12px", fontWeight: "600" },
     });
-    lengthSection.appendChild(lenLabel);
+
+    const lenHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", alignItems: "center" }
+    });
+    lenHeader.appendChild(lenLabel);
+
+    const lenResetBtn = ztoolkit.UI.createElement(doc, "span", {
+      properties: { innerText: "↺", title: "Reset to Default" },
+      styles: {
+        fontSize: "14px",
+        cursor: "pointer",
+        color: "var(--text-tertiary, #999)",
+        display: currentLen === undefined ? "none" : "inline-block"
+      }
+    });
+    lenHeader.appendChild(lenResetBtn);
+    lengthSection.appendChild(lenHeader);
 
     const sliderContainer = ztoolkit.UI.createElement(doc, "div", {
       styles: { display: "flex", alignItems: "center", gap: "10px" },
     });
-    const sliderValue = currentLen === 0 ? 4200 : currentLen; // 0 means unlimited
-    const slider = ztoolkit.UI.createElement(doc, "input", {
+
+    const sliderValue = (currentLen === undefined || currentLen === 0) ? 4200 : currentLen;
+    const lengthSlider = ztoolkit.UI.createElement(doc, "input", {
       attributes: {
         type: "range",
         min: "20",
@@ -17063,25 +17382,96 @@ You MUST call the generate_tags function.`;
       },
       styles: { flex: "1" },
     }) as HTMLInputElement;
-    sliderContainer.appendChild(slider);
+    sliderContainer.appendChild(lengthSlider);
     lengthSection.appendChild(sliderContainer);
 
-    slider.addEventListener("input", async () => {
-      const val = parseInt(slider.value);
-      if (val > 4200) {
-        lenLabel.innerText = `Max Response Length: Limitless`;
-      } else {
-        lenLabel.innerText = `Max Response Length: ${val} words`;
-      }
+    lengthSlider.addEventListener("input", async () => {
+      const val = parseInt(lengthSlider.value);
+      lenLabel.innerText = `Max Response Length: ${val > 4200 ? "Limitless" : val + " words"}`;
+      lenResetBtn.style.display = "inline-block";
       if (currentTableConfig) {
         currentTableConfig.responseLength = val > 4200 ? 0 : val;
-        const tableStore = getTableStore();
-        await tableStore.saveConfig(currentTableConfig);
+        await getTableStore().saveConfig(currentTableConfig);
       }
     });
-    popover.appendChild(lengthSection);
+
+    lenResetBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (currentTableConfig) {
+        currentTableConfig.responseLength = undefined;
+        await getTableStore().saveConfig(currentTableConfig);
+      }
+      lenLabel.innerText = `Max Response Length: Default`;
+      lengthSlider.value = "4200";
+      lenResetBtn.style.display = "none";
+    });
 
     popover.appendChild(lengthSection);
+
+    // === Temperature ===
+    const tempSection = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", flexDirection: "column", gap: "8px", marginTop: "4px" },
+    });
+
+    const currentTemp = currentTableConfig?.temperature;
+    const getTempText = (t?: number) => t === undefined ? "Default" : t.toFixed(1);
+
+    const tempLabel = ztoolkit.UI.createElement(doc, "div", {
+      properties: { innerText: `Temperature: ${getTempText(currentTemp)}` },
+      styles: { fontSize: "12px", fontWeight: "600" },
+    });
+
+    const tempHeader = ztoolkit.UI.createElement(doc, "div", {
+      styles: { display: "flex", justifyContent: "space-between", alignItems: "center" }
+    });
+    tempHeader.appendChild(tempLabel);
+
+    const tempResetBtn = ztoolkit.UI.createElement(doc, "span", {
+      properties: { innerText: "↺", title: "Reset to Default" },
+      styles: {
+        fontSize: "14px",
+        cursor: "pointer",
+        color: "var(--text-tertiary, #999)",
+        display: currentTemp === undefined ? "none" : "inline-block"
+      }
+    });
+    tempHeader.appendChild(tempResetBtn);
+    tempSection.appendChild(tempHeader);
+
+    const tempSlider = ztoolkit.UI.createElement(doc, "input", {
+      attributes: {
+        type: "range",
+        min: "0",
+        max: "2",
+        step: "0.1",
+        value: String(currentTemp ?? 0.7),
+      },
+      styles: { flex: "1", cursor: "pointer" },
+    }) as HTMLInputElement;
+
+    tempSlider.addEventListener("input", async () => {
+      const val = parseFloat(tempSlider.value);
+      tempLabel.innerText = `Temperature: ${val.toFixed(1)}`;
+      tempResetBtn.style.display = "inline-block";
+      if (currentTableConfig) {
+        currentTableConfig.temperature = val;
+        await getTableStore().saveConfig(currentTableConfig);
+      }
+    });
+
+    tempResetBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (currentTableConfig) {
+        currentTableConfig.temperature = undefined;
+        await getTableStore().saveConfig(currentTableConfig);
+      }
+      tempLabel.innerText = `Temperature: Default`;
+      tempSlider.value = "0.7";
+      tempResetBtn.style.display = "none";
+    });
+
+    tempSection.appendChild(tempSlider);
+    popover.appendChild(tempSection);
 
     // === Column Presets ===
 
@@ -21417,11 +21807,14 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
 
       // Get active model config for API call
       const activeModel = getActiveModelConfig();
+      const chatOptions = getChatStateManager().getOptions();
       const configOverride = activeModel
         ? {
           apiURL: activeModel.apiURL,
           apiKey: activeModel.apiKey,
           model: activeModel.model,
+          temperature: chatOptions.temperature,
+          max_tokens: chatOptions.maxTokens
         }
         : undefined;
 
@@ -21440,6 +21833,8 @@ ${webContext ? " When using web search results, cite the source URL." : ""}`;
             includeImages: options.includeImages || manuallyPastedParts.length > 0,
             pastedImages: pastedImages,
             permissionHandler: Assistant.handleInlinePermissionRequest,
+            temperature: chatOptions.temperature,
+            maxTokens: chatOptions.maxTokens,
           },
           observer
         );

@@ -11,6 +11,7 @@ export interface ChatSettingsOptions {
 
 export function showChatSettings(doc: Document, anchor: HTMLElement, options: ChatSettingsOptions = {}): void {
     Zotero.debug("[seerai] showChatSettings called");
+    const stateManager = getChatStateManager();
     // Remove existing if open (check body scope)
     const existing = doc.getElementById('chat-settings-popover-portal');
     if (existing) {
@@ -178,8 +179,172 @@ export function showChatSettings(doc: Document, anchor: HTMLElement, options: Ch
     modelSection.appendChild(optionsContainer);
     body.appendChild(modelSection);
 
+    // --- 1.5. Model Parameters (Temp & Max Tokens) ---
+    const paramSection = doc.createElement('div');
+    paramSection.style.marginTop = '4px';
+    paramSection.style.display = 'flex';
+    paramSection.style.flexDirection = 'column';
+    paramSection.style.gap = '8px';
+
+    const currentOptions = stateManager.getOptions();
+
+    // Temperature Row
+    const tempRow = doc.createElement('div');
+    Object.assign(tempRow.style, {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '4px'
+    });
+
+    const tempHeader = doc.createElement('div');
+    Object.assign(tempHeader.style, {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        fontSize: '11px',
+        color: 'var(--text-secondary)'
+    });
+
+    const tempLabel = doc.createElement('span');
+    tempLabel.innerText = 'Temperature:';
+
+    // Value display or "Default"
+    const tempValueDisplay = doc.createElement('span');
+    const formatTemp = (t?: number) => t === undefined ? 'Default' : t.toFixed(1);
+    tempValueDisplay.innerText = formatTemp(currentOptions.temperature);
+    tempValueDisplay.style.fontWeight = '600';
+    tempValueDisplay.style.color = 'var(--text-primary)';
+
+    const tempResetBtn = doc.createElement('span');
+    tempResetBtn.innerText = '↺';
+    tempResetBtn.title = 'Reset to Default';
+    Object.assign(tempResetBtn.style, {
+        marginLeft: '10px',
+        fontSize: '14px',
+        cursor: 'pointer',
+        color: 'var(--text-tertiary, #999)',
+        display: currentOptions.temperature === undefined ? 'none' : 'inline-block'
+    });
+
+    const infoGroup = doc.createElement('div');
+    infoGroup.style.display = 'flex';
+    infoGroup.style.alignItems = 'center';
+    infoGroup.appendChild(tempValueDisplay);
+    infoGroup.appendChild(tempResetBtn);
+
+    tempHeader.appendChild(tempLabel);
+    tempHeader.appendChild(infoGroup);
+
+    // Slider
+    const tempSlider = doc.createElement('input');
+    tempSlider.type = 'range';
+    tempSlider.min = '0';
+    tempSlider.max = '2';
+    tempSlider.step = '0.1';
+    tempSlider.value = String(currentOptions.temperature ?? 0.7);
+    tempSlider.disabled = false;
+    Object.assign(tempSlider.style, {
+        flex: '1',
+        height: '4px',
+        cursor: 'pointer'
+    });
+
+    tempResetBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stateManager.setOptions({ ...stateManager.getOptions(), temperature: undefined });
+        tempValueDisplay.innerText = 'Default';
+        tempSlider.value = '0.7';
+        tempResetBtn.style.display = 'none';
+        Zotero.debug('[seerai] Temperature reset to default');
+    });
+
+    tempSlider.addEventListener('input', (e) => {
+        const val = parseFloat((e.target as HTMLInputElement).value);
+        tempValueDisplay.innerText = val.toFixed(1);
+        tempResetBtn.style.display = 'inline-block';
+        stateManager.setOptions({ ...stateManager.getOptions(), temperature: val });
+    });
+
+    tempRow.appendChild(tempHeader);
+    tempRow.appendChild(tempSlider);
+    paramSection.appendChild(tempRow);
+
+    // Max Tokens Row
+    const tokensRow = doc.createElement('div');
+    Object.assign(tokensRow.style, {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        fontSize: '11px'
+    });
+
+    const tokensInfo = doc.createElement('div');
+    Object.assign(tokensInfo.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+    });
+
+    const tokensLabel = doc.createElement('span');
+    tokensLabel.innerText = 'Max Response Length:';
+    tokensLabel.style.color = 'var(--text-secondary)';
+
+    const tokensResetBtn = doc.createElement('span');
+    tokensResetBtn.innerText = '↺';
+    tokensResetBtn.title = 'Reset to Default';
+    Object.assign(tokensResetBtn.style, {
+        fontSize: '14px',
+        cursor: 'pointer',
+        color: 'var(--text-tertiary, #999)',
+        display: currentOptions.maxTokens ? 'inline-block' : 'none'
+    });
+
+    tokensInfo.appendChild(tokensLabel);
+    tokensInfo.appendChild(tokensResetBtn);
+    tokensRow.appendChild(tokensInfo);
+    const tokensInput = doc.createElement('input');
+    tokensInput.type = 'number';
+    tokensInput.min = '1';
+    tokensInput.placeholder = 'Default'; // or model max
+    if (currentOptions.maxTokens) {
+        tokensInput.value = String(currentOptions.maxTokens);
+    }
+
+    Object.assign(tokensInput.style, {
+        width: '50px',
+        padding: '2px',
+        fontSize: '11px',
+        border: '1px solid var(--border-primary)',
+        borderRadius: '4px',
+        textAlign: 'center'
+    });
+
+    tokensInput.addEventListener('input', () => {
+        const val = parseInt(tokensInput.value);
+        if (!isNaN(val) && val > 0) {
+            tokensResetBtn.style.display = 'inline-block';
+            stateManager.setOptions({ ...stateManager.getOptions(), maxTokens: val });
+        } else {
+            tokensResetBtn.style.display = 'none';
+            stateManager.setOptions({ ...stateManager.getOptions(), maxTokens: undefined });
+        }
+    });
+
+    tokensResetBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        stateManager.setOptions({ ...stateManager.getOptions(), maxTokens: undefined });
+        tokensInput.value = '';
+        tokensResetBtn.style.display = 'none';
+        Zotero.debug('[seerai] Max tokens reset to default');
+    });
+
+    tokensRow.appendChild(tokensInput);
+    paramSection.appendChild(tokensRow);
+
+    body.appendChild(paramSection);
+
+
     // --- 2. Context Mode ---
-    const stateManager = getChatStateManager();
     const currentMode = stateManager.getOptions().selectionMode;
 
     const modeSection = doc.createElement('div');
