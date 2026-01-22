@@ -149,7 +149,7 @@ export class OpenAIService {
     /**
      * Prepare request body by handling reasoning model specifics and filtering unsupported parameters.
      */
-    private prepareRequestBody(model: string, messages: AnyOpenAIMessage[], options?: { stream?: boolean; temperature?: number; max_tokens?: number }): Record<string, unknown> {
+    private prepareRequestBody(model: string, messages: AnyOpenAIMessage[], options?: { stream?: boolean; temperature?: number; max_tokens?: number; reasoningEffort?: 'low' | 'medium' | 'high' }): Record<string, unknown> {
         const isReasoning = this.isReasoningModel(model);
 
         const body: Record<string, unknown> = {
@@ -166,14 +166,19 @@ export class OpenAIService {
             // Reasoning models (o1, o3, reasoner) typically:
             // 1. Don't support 'temperature', 'top_p', etc. (or require them to be default)
             // 2. Use 'max_completion_tokens' instead of 'max_tokens'
+            // 3. Support 'reasoning_effort' to control reasoning depth (optional)
 
             if (options?.max_tokens !== undefined) {
                 body.max_completion_tokens = options.max_tokens;
             }
 
-            // Explicitly exclude unsupported parameters or ensure they aren't added
-            // (We just don't add them here)
-            Zotero.debug(`[seerai] Preparing request for reasoning model: ${model}. Stripping temperature/top_p.`);
+            // Only enable reasoning if explicitly configured by user
+            if (options?.reasoningEffort) {
+                body.reasoning_effort = options.reasoningEffort;
+                Zotero.debug(`[seerai] Preparing request for reasoning model: ${model}. Stripping temperature/top_p, setting reasoning_effort=${body.reasoning_effort}.`);
+            } else {
+                Zotero.debug(`[seerai] Preparing request for reasoning model: ${model}. Stripping temperature/top_p, reasoning_effort not configured.`);
+            }
         } else {
             // Standard models
             if (options?.temperature !== undefined) {
@@ -330,7 +335,8 @@ export class OpenAIService {
             const requestBody = this.prepareRequestBody(model, messages, {
                 stream: true,
                 temperature: configOverride?.temperature,
-                max_tokens: configOverride?.max_tokens
+                max_tokens: configOverride?.max_tokens,
+                reasoningEffort: effectiveConfig?.reasoningEffort
             });
 
             // Add tools if provided (reasoning models from OpenAI currently have limited tool support, 

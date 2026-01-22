@@ -240,6 +240,10 @@ export function validateModelConfig(config: Partial<AIModelConfig>): string[] {
         }
     }
 
+    if (config.reasoningEffort && !['low', 'medium', 'high'].includes(config.reasoningEffort)) {
+        errors.push("Invalid reasoning effort value");
+    }
+
     return errors;
 }
 

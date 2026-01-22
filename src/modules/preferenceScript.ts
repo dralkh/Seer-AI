@@ -808,6 +808,35 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
   rlContainer.appendChild(rlValueInput);
   modal.appendChild(rlContainer);
 
+  // --- Reasoning Effort Section ---
+  const reLabel = doc.createElement('label');
+  reLabel.textContent = 'Reasoning Effort (for o1/o3/reasoning models)';
+  reLabel.style.cssText = labelStyle;
+  modal.appendChild(reLabel);
+
+  const reSelect = doc.createElement('select') as HTMLSelectElement;
+  reSelect.style.cssText = selectStyle;
+
+  const reOptions = [
+    { value: '', label: 'Disabled (Use Provider Default)' },
+    { value: 'low', label: 'Low' },
+    { value: 'medium', label: 'Medium' },
+    { value: 'high', label: 'High' }
+  ];
+
+  reOptions.forEach(opt => {
+    const option = doc.createElement('option');
+    option.value = opt.value;
+    option.textContent = opt.label;
+    if (existingConfig?.reasoningEffort === opt.value || (!existingConfig?.reasoningEffort && opt.value === '')) {
+      option.selected = true;
+    }
+    reSelect.appendChild(option);
+  });
+
+  modal.appendChild(reSelect);
+
+
   // Error message container
   const errorBg = getCssVar('--modal-error-bg');
   const errorText = getCssVar('--modal-error-text');
@@ -895,7 +924,8 @@ function showModelConfigDialog(existingConfig?: AIModelConfig) {
       rateLimit: {
         type: rlTypeSelect.value as 'tpm' | 'rpm' | 'concurrency',
         value: parseInt(rlValueInput.value) || 5
-      }
+      },
+      ...(reSelect.value && { reasoningEffort: reSelect.value as 'low' | 'medium' | 'high' })
     };
 
     // Validate

@@ -134,6 +134,7 @@ export interface AIModelConfig {
         type: 'tpm' | 'rpm' | 'concurrency';
         value: number;
     };
+    reasoningEffort?: 'low' | 'medium' | 'high';  // For o1/o3/reasoning models
     createdAt?: string;      // ISO date string
     updatedAt?: string;      // ISO date string
 }
